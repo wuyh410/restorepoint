@@ -1,0 +1,70 @@
+name: Release assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing draft release tag
+        required: true
+        type: string
+      run_id:
+        description: Successful Desktop builds run ID
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+jobs:
+  upload:
+    runs-on: ubuntu-22.04
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ inputs.tag }}
+      SOURCE_RUN_ID: ${{ inputs.run_id }}
+    steps:
+      - name: Check source build and draft release
+        run: |
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN_ID" > source-run.json
+          gh release view "$RELEASE_TAG" --json isDraft > release.json
+          python3 - <<'PY'
+          import json
+          import os
+          run = json.load(open('source-run.json'))
+          assert run['repository']['full_name'] == os.environ['GH_REPO']
+          assert run['path'] == '.github/workflows/desktop.yml'
+          assert run['status'] == 'completed' and run['conclusion'] == 'success'
+          assert json.load(open('release.json'))['isDraft'], 'Only draft release assets may be replaced'
+          PY
+      - name: Retrieve verified desktop packages
+        run: |
+          gh run download "$SOURCE_RUN_ID" --name RestorePoint-Linux --dir linux
+          gh run download "$SOURCE_RUN_ID" --name RestorePoint-Windows --dir windows
+          mkdir release-assets
+          mv linux/RestorePoint-Linux.tar.gz release-assets/RestorePoint-linux-x86_64-ubuntu22.tar.gz
+          mv windows/RestorePoint-Windows.zip release-assets/RestorePoint-windows-x86_64.zip
+          gh release download "$RELEASE_TAG" --pattern SHA256SUMS --dir release-assets
+      - name: Verify package checksums
+        working-directory: release-assets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          expected = {'RestorePoint-linux-x86_64-ubuntu22.tar.gz', 'RestorePoint-windows-x86_64.zip'}
+          selected = []
+          for line in Path('SHA256SUMS').read_text().splitlines():
+              digest, name = line.split('  ', 1)
+              if name in expected:
+                  expected.remove(name)
+                  selected.append(line)
+          assert not expected, 'Missing expected checksums: ' + str(expected)
+          Path('packages.sha256').write_text('\n'.join(selected) + '\n')
+          PY
+          sha256sum --check packages.sha256
+      - name: Upload desktop packages to draft release
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            release-assets/RestorePoint-linux-x86_64-ubuntu22.tar.gz \
+            release-assets/RestorePoint-windows-x86_64.zip \
+            --clobber
