@@ -25,6 +25,7 @@ jobs:
         run: python -m unittest -v test_desktop.py test_deployment.py
         env:
           QT_QPA_PLATFORM: offscreen
+          RESTOREPOINT_UI_ARTIFACT_DIR: build/ui-checks
       - name: Test Linux backup engines
         if: runner.os == 'Linux'
         run: python -m unittest -v test_snapshot.py test_portable.py
@@ -41,3 +42,9 @@ jobs:
           path: |
             dist/*.tar.gz
             dist/*.zip
+      - uses: actions/upload-artifact@v7.0.2
+        if: always()
+        with:
+          name: RestorePoint-UI-${{ runner.os }}
+          path: build/ui-checks/*.png
+          if-no-files-found: ignore

@@ -69,7 +69,7 @@ class SettingsStore:
         if data.get('schema') != 1:
             raise ValueError('不支持的配置文件格式。')
         profiles = [Profile.from_dict(p) for p in data['profiles']]
-        return profiles or [Profile()]
+        return profiles
 
     def save(self, profiles):
         temporary = self.path.with_suffix('.tmp')

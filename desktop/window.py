@@ -8,13 +8,13 @@ import shutil
 import sys
 
 from PySide6.QtCore import QLockFile, QStandardPaths, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QFont, QIcon
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
     QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
-    QPushButton, QScrollArea, QSizePolicy, QSpinBox, QSplitter, QStackedWidget,
-    QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget,
+    QListView, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
+    QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QSpinBox, QSplitter, QStackedWidget,
+    QStyledItemDelegate, QTableWidget, QTableWidgetItem, QTextBrowser, QVBoxLayout, QWidget,
 )
 
 from . import VERSION, bundles
@@ -53,8 +53,26 @@ QPushButton#primary:disabled { background: #c8d3ed; border-color: #c8d3ed; }
 QPushButton#danger { color: #b34444; }
 QLineEdit, QComboBox, QSpinBox { background: white; color: #24344c; border: 1px solid #d8e0eb; border-radius: 6px; padding: 7px 9px; min-height: 20px; selection-background-color: #315fe5; }
 QLineEdit:focus, QComboBox:focus, QSpinBox:focus { border-color: #5780ee; }
-QWidget#sidebar QComboBox { background: #213852; color: white; border-color: #38506d; }
-QComboBox QAbstractItemView { background: white; color: #24344c; selection-background-color: #e8effc; selection-color: #254fcb; }
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled { background: #f0f2f6; color: #8997ac; border-color: #e2e7ef; }
+QComboBox { padding-right: 38px; }
+QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top right; width: 31px; background: #f8fafc; border-left: 1px solid #d8e0eb; border-top-right-radius: 5px; border-bottom-right-radius: 5px; }
+QComboBox::drop-down:hover { background: #edf2fa; }
+QComboBox::down-arrow { image: url("__ASSETS__/chevron-down.svg"); width: 14px; height: 14px; }
+QComboBox QLineEdit { background: transparent; color: #24344c; border: 0; padding: 0; min-height: 0; }
+QComboBox#profileSelector { background: #213852; color: #f8fafc; border-color: #38506d; }
+QComboBox#profileSelector:disabled { color: #bac9dc; }
+QComboBox#profileSelector::drop-down { background: #2a4262; border-left-color: #38506d; }
+QComboBox#profileSelector::drop-down:hover { background: #355172; }
+QComboBox#profileSelector::down-arrow { image: url("__ASSETS__/chevron-down-light.svg"); }
+QSpinBox { padding-right: 38px; }
+QSpinBox QLineEdit { background: transparent; color: #24344c; border: 0; border-radius: 0; padding: 0; min-height: 0; }
+QSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 30px; background: #f8fafc; border-left: 1px solid #d8e0eb; border-bottom: 1px solid #d8e0eb; border-top-right-radius: 5px; }
+QSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 30px; background: #f8fafc; border-left: 1px solid #d8e0eb; border-bottom-right-radius: 5px; }
+QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #edf2fa; }
+QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background: #dfe9fc; }
+QSpinBox::up-button:disabled, QSpinBox::down-button:disabled { background: #f0f2f6; }
+QSpinBox::up-arrow { image: url("__ASSETS__/chevron-up.svg"); width: 12px; height: 12px; }
+QSpinBox::down-arrow { image: url("__ASSETS__/chevron-down.svg"); width: 12px; height: 12px; }
 QTableWidget { background: white; border: 1px solid #e2e7ef; border-radius: 9px; gridline-color: #edf0f5; selection-background-color: #e9effd; selection-color: #1b3564; }
 QHeaderView::section { background: #f8fafc; color: #65758d; border: 0; border-bottom: 1px solid #e2e7ef; padding: 12px; font-weight: 500; }
 QTableWidget::item { padding: 8px; border: 0; }
@@ -64,7 +82,44 @@ QProgressBar::chunk { background: #4676e9; border-radius: 4px; }
 QScrollArea { border: 0; background: transparent; }
 QStatusBar { background: #eef2f7; color: #63758e; border-top: 1px solid #e0e6ee; }
 QToolTip { background: #14263e; color: white; border: 0; padding: 6px; }
-"""
+""".replace('__ASSETS__', (resource_root() / 'assets').as_posix())
+
+
+def apply_theme(app):
+    app.setStyle('Fusion')
+    # Windows may provide a dark system palette even though our workspace is
+    # light. Set all text/base roles explicitly, including inactive windows.
+    palette = QPalette()
+    colors = {
+        QPalette.ColorRole.Window: '#f4f6fa', QPalette.ColorRole.WindowText: '#24344c',
+        QPalette.ColorRole.Base: '#ffffff', QPalette.ColorRole.AlternateBase: '#f8fafc',
+        QPalette.ColorRole.Text: '#24344c', QPalette.ColorRole.Button: '#ffffff',
+        QPalette.ColorRole.ButtonText: '#314560', QPalette.ColorRole.Highlight: '#315fe5',
+        QPalette.ColorRole.HighlightedText: '#ffffff', QPalette.ColorRole.PlaceholderText: '#708098',
+        QPalette.ColorRole.ToolTipBase: '#14263e', QPalette.ColorRole.ToolTipText: '#ffffff',
+    }
+    for role, color in colors.items():
+        palette.setColor(role, QColor(color))
+    for role in (QPalette.ColorRole.Text, QPalette.ColorRole.WindowText, QPalette.ColorRole.ButtonText):
+        palette.setColor(QPalette.ColorGroup.Disabled, role, QColor('#8997ac'))
+    app.setPalette(palette)
+    app.setStyleSheet(STYLE)
+
+
+def combo_box():
+    widget = QComboBox()
+    view = QListView(widget)
+    view.setStyleSheet('''
+        QListView { background: white; color: #24344c; border: 1px solid #d8e0eb; padding: 4px; outline: 0; }
+        QListView::item { min-height: 28px; padding: 4px 8px; color: #24344c; }
+        QListView::item:selected { background: #e8effc; color: #254fcb; }
+        QListView::item:hover { background: #f0f4fc; }
+        QListView::item:disabled { color: #8997ac; }
+    ''')
+    widget.setView(view)
+    widget.setItemDelegate(QStyledItemDelegate(view))
+    widget.setMaxVisibleItems(12)
+    return widget
 
 
 def label(text, name='', wrap=False):
@@ -131,8 +186,9 @@ class MainWindow(QMainWindow):
         side.addWidget(label('RESTOREPOINT', 'muted'))
         side.addSpacing(20)
         side.addWidget(label('当前备份配置'))
-        self.profile_combo = QComboBox()
+        self.profile_combo = combo_box()
         self.profile_combo.setObjectName('profileSelector')
+        self.profile_combo.setPlaceholderText('暂无配置')
         side.addWidget(self.profile_combo)
         self.navigation = QListWidget()
         self.navigation.setObjectName('navigation')
@@ -182,11 +238,12 @@ class MainWindow(QMainWindow):
         self.reload_profiles(0)
         self.render_history()
 
-    def button(self, text, callback, primary=False):
+    def button(self, text, callback, primary=False, requires_profile=True):
         widget = QPushButton(text)
         if primary:
             widget.setObjectName('primary')
         widget.clicked.connect(callback)
+        widget.setProperty('requiresProfile', requires_profile)
         self.buttons.append(widget)
         return widget
 
@@ -295,14 +352,14 @@ class MainWindow(QMainWindow):
         widget, box = card()
         form = QFormLayout()
         form.setSpacing(16)
-        self.restore_version = QComboBox()
+        self.restore_version = combo_box()
         self.restore_version.setObjectName('restoreVersion')
         self.restore_version.setEditable(True)
         self.restore_version.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.restore_version.setPlaceholderText('选择或输入完整版本名')
         self.restore_version.currentTextChanged.connect(self.invalidate_preview)
         form.addRow('备份版本', self.restore_version)
-        self.restore_area = QComboBox()
+        self.restore_area = combo_box()
         self.restore_area.addItem('用户目录 / 文件', 'home')
         self.restore_area.addItem('系统与已安装软件', 'system')
         self.restore_area.currentIndexChanged.connect(self.area_changed)
@@ -355,14 +412,20 @@ class MainWindow(QMainWindow):
 
     def build_settings(self):
         layout = self.page('连接与存储', '每台测试机使用独立配置。认证密码在任务中输入，配置文件只保存连接参数和路径。')
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         tools = QHBoxLayout()
-        tools.addWidget(self.button('新增配置', self.add_profile))
-        tools.addWidget(self.button('导入配置', self.import_profile))
+        tools.addWidget(self.button('新增配置', self.add_profile, requires_profile=False))
+        tools.addWidget(self.button('导入配置', self.import_profile, requires_profile=False))
         tools.addWidget(self.button('导出配置', self.export_profile))
         tools.addStretch()
         tools.addWidget(self.button('删除当前配置', self.delete_profile))
         layout.addLayout(tools)
+        self.settings_empty = label('暂无连接配置。点击「新增配置」填写测试机信息，或导入已有配置。', 'muted', True)
+        layout.addWidget(self.settings_empty)
+        self.settings_empty_space = QSpacerItem(0, 0, QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Expanding)
+        layout.addSpacerItem(self.settings_empty_space)
         scroll = QScrollArea()
+        self.settings_scroll = scroll
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         content = QWidget()
@@ -375,7 +438,7 @@ class MainWindow(QMainWindow):
         form = QFormLayout()
         self.fields['name'] = QLineEdit()
         form.addRow('配置名称', self.fields['name'])
-        self.mode = QComboBox()
+        self.mode = combo_box()
         self.mode.addItem('本机 Linux · rsync 快照', 'local')
         self.mode.addItem('远程 Linux · 完整备份包', 'remote')
         if sys.platform != 'linux':
@@ -390,6 +453,7 @@ class MainWindow(QMainWindow):
         self.storage_label = label('备份包保存目录')
         form.addRow(self.storage_label, row)
         self.reserve = QSpinBox()
+        self.reserve.lineEdit().setTextMargins(8, 0, 0, 0)
         self.reserve.setRange(8, 65536)
         self.reserve.setSuffix(' GiB')
         self.reserve.valueChanged.connect(self.configuration_edited)
@@ -405,6 +469,7 @@ class MainWindow(QMainWindow):
             self.fields[key] = edit
             form.addRow(title, edit)
         self.port = QSpinBox()
+        self.port.lineEdit().setTextMargins(8, 0, 0, 0)
         self.port.setRange(1, 65535)
         form.addRow('SSH 端口', self.port)
         row, self.fields['identity_file'] = self.path_field('可选；留空使用 SSH agent、默认密钥或密码', False)
@@ -463,8 +528,8 @@ class MainWindow(QMainWindow):
         splitter.setSizes([190, 360])
         layout.addWidget(splitter, 1)
         actions = QHBoxLayout()
-        actions.addWidget(self.button('导出当前日志', self.export_log))
-        actions.addWidget(self.button('打开日志目录', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.directory / 'logs')))))
+        actions.addWidget(self.button('导出当前日志', self.export_log, requires_profile=False))
+        actions.addWidget(self.button('打开日志目录', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.directory / 'logs'))), requires_profile=False))
         actions.addStretch()
         layout.addLayout(actions)
 
@@ -505,6 +570,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(browser, 1)
 
     def reload_profiles(self, selected):
+        selected = min(max(selected, 0), len(self.profiles) - 1)
         self.profile_combo.blockSignals(True)
         self.profile_combo.clear()
         for profile in self.profiles:
@@ -514,7 +580,26 @@ class MainWindow(QMainWindow):
         self.select_profile(selected)
 
     def select_profile(self, index):
-        if index < 0:
+        present = 0 <= index < len(self.profiles)
+        self.settings_scroll.setVisible(present)
+        self.settings_empty.setVisible(not present)
+        self.settings_empty_space.changeSize(0, 0, QSizePolicy.Policy.Minimum,
+                                             QSizePolicy.Policy.Fixed if present else QSizePolicy.Policy.Expanding)
+        self.settings_scroll.parentWidget().layout().invalidate()
+        if not present:
+            for edit in self.fields.values():
+                edit.clear()
+            self.mode.setCurrentIndex(-1)
+            self.rows = []
+            self.restore_target.clear()
+            self.restore_relative.clear()
+            self.invalidate_preview()
+            self.render_rows()
+            self.badge.setText('暂无连接配置')
+            self.hero_description.setText('在「连接与存储」中新增测试机配置，或导入已有配置。')
+            self.restore_notice.setText('请先新增或导入一个备份配置。')
+            self.saved_label.setText('暂无配置 · 可新增或导入')
+            self.set_busy(False)
             return
         profile = self.profiles[index]
         for key, edit in self.fields.items():
@@ -531,8 +616,16 @@ class MainWindow(QMainWindow):
         self.mode_changed()
         self.render_rows()
         self.saved_label.setText('配置更改后请保存')
+        if not self.restore_target.text():
+            self.area_changed()
+        self.set_busy(False)
+
+    def has_profile(self):
+        return 0 <= self.profile_combo.currentIndex() < len(self.profiles)
 
     def current_profile(self):
+        if not self.has_profile():
+            raise ValueError('请先新增或导入一个备份配置。')
         original = self.profiles[self.profile_combo.currentIndex()]
         data = asdict(original)
         data.update({key: edit.text().strip() for key, edit in self.fields.items()})
@@ -580,13 +673,13 @@ class MainWindow(QMainWindow):
         self.navigation.setCurrentRow(3)
 
     def delete_profile(self):
-        if len(self.profiles) == 1:
-            QMessageBox.information(self, '保留一个配置', '至少保留一个备份配置。')
+        if not self.has_profile() or self.job:
             return
         if QMessageBox.question(self, '删除配置', '删除当前连接配置？备份数据不随配置删除。') == QMessageBox.StandardButton.Yes:
-            del self.profiles[self.profile_combo.currentIndex()]
+            index = self.profile_combo.currentIndex()
+            del self.profiles[index]
             self.store.save(self.profiles)
-            self.reload_profiles(0)
+            self.reload_profiles(index)
 
     def import_profile(self):
         path = QFileDialog.getOpenFileName(self, '导入 JSON 配置', '', 'JSON (*.json)')[0]
@@ -604,6 +697,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, '导入失败', str(exc))
 
     def export_profile(self):
+        if not self.has_profile():
+            return
         path = QFileDialog.getSaveFileName(self, '导出连接配置', 'restorepoint-profile.json', 'JSON (*.json)')[0]
         if path:
             try:
@@ -632,7 +727,13 @@ class MainWindow(QMainWindow):
         self.update_stats()
 
     def update_stats(self):
-        if not hasattr(self, 'fields') or not self.profiles:
+        if not hasattr(self, 'fields'):
+            return
+        if not self.has_profile():
+            for widget, text in zip(self.stat_values, ('0', '—', '尚无任务')):
+                widget.setText(text)
+            self.hero_title.setText('先添加一台测试机')
+            self.next_step.setText('在「连接与存储」中新增或导入配置，再检查连接和备份环境。')
             return
         self.stat_values[0].setText(str(len([r for r in self.rows if not r.get('error')])))
         profile = self.current_profile()
@@ -688,6 +789,8 @@ class MainWindow(QMainWindow):
         self.invalidate_preview()
 
     def signature(self):
+        if not self.has_profile():
+            return None
         return (json.dumps(asdict(self.current_profile()), sort_keys=True), self.restore_version.currentText(), self.restore_area.currentData(), self.restore_target.text(), self.restore_relative.text())
 
     def invalidate_preview(self, *_):
@@ -700,7 +803,7 @@ class MainWindow(QMainWindow):
                    target=self.restore_target.text().strip(), relative=self.restore_relative.text().strip() if self.restore_area.currentData() == 'home' else '', apply=apply)
 
     def apply_restore(self):
-        if self.preview_signature != self.signature():
+        if self.preview_signature is None or self.preview_signature != self.signature():
             self.invalidate_preview()
             return
         detail = '将覆盖目标中选定范围内的同名文件。' if self.restore_area.currentData() == 'home' else '将还原系统文件，并清理备份之后新增的系统文件。'
@@ -749,14 +852,15 @@ class MainWindow(QMainWindow):
         self.job.start()
 
     def set_busy(self, busy):
+        present = self.has_profile()
         for button in self.buttons:
-            button.setEnabled(not busy)
-        self.profile_combo.setEnabled(not busy)
-        self.settings_content.setEnabled(not busy)
+            button.setEnabled(not busy and (present or not button.property('requiresProfile')))
+        self.profile_combo.setEnabled(not busy and present)
+        self.settings_content.setEnabled(not busy and present)
         for widget in (self.restore_version, self.restore_area, self.restore_target, self.restore_relative):
-            widget.setEnabled(not busy)
+            widget.setEnabled(not busy and present)
         self.cancel_button.setEnabled(busy)
-        self.apply_button.setEnabled(not busy and self.preview_signature == self.signature())
+        self.apply_button.setEnabled(not busy and present and self.preview_signature is not None and self.preview_signature == self.signature())
         if busy:
             self.progress.setRange(0, 0)
             self.task_status.setText(ACTIONS[self.active_action] + ' · 运行中')
@@ -878,8 +982,7 @@ def main():
     app = QApplication(sys.argv[:1])
     app.setApplicationName('RestorePoint')
     app.setOrganizationName('RestorePoint')
-    app.setStyle('Fusion')
-    app.setStyleSheet(STYLE)
+    apply_theme(app)
     directory = args.data_dir or Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation))
     directory.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(directory / 'desktop.lock'))

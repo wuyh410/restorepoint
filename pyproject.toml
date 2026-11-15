@@ -12,4 +12,7 @@ files = [
     "portable.py",
     "gui_bridge.py",
     "assets/icon.svg",
+    "assets/chevron-down.svg",
+    "assets/chevron-up.svg",
+    "assets/chevron-down-light.svg",
 ]

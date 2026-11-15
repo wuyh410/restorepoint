@@ -186,18 +186,20 @@ class RemoteConnection:
                 self.client = client
                 context.log(f'已连接 {self.username}@{host}:{port}')
                 return self
-            except (paramiko.AuthenticationException, paramiko.PasswordRequiredException):
+            except Exception as exc:
                 client.close()
                 if proxy:
                     proxy.close()
+                # Paramiko raises a plain SSHException when a fresh client has
+                # neither local keys nor an agent. This still needs the normal
+                # password prompt; other SSH/host-key errors must propagate.
+                can_prompt = isinstance(exc, (paramiko.AuthenticationException, paramiko.PasswordRequiredException)) or (
+                    type(exc) is paramiko.SSHException and str(exc) == 'No authentication methods available')
+                if not can_prompt:
+                    raise
                 if attempt:
-                    raise RuntimeError('SSH 认证失败，请检查用户名、密码或私钥。')
+                    raise RuntimeError('SSH 认证失败，请检查用户名、密码或私钥。') from exc
                 secret = context.ask('password', {'title': 'SSH 认证', 'text': f'请输入 {self.username}@{host} 的密码，或私钥解锁口令。'})
-            except Exception:
-                client.close()
-                if proxy:
-                    proxy.close()
-                raise
 
     def __exit__(self, *unused):
         if self.client:
