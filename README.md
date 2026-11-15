@@ -99,8 +99,10 @@ $env:QT_QPA_PLATFORM = 'offscreen'
 ```
 
 Linux 开发环境已完成隔离测试、Qt 离屏渲染与构建程序启动检查。
+GitHub Actions 已在 Ubuntu 22.04 和 Windows 运行器上通过测试、Nuitka 编译与
+离屏界面启动检查；Windows 跳过仅适用 Linux 的测试。
 测试覆盖本地版本、元数据还原、损坏包拦截、恢复保护、文件传输适配、后台任务及日志
-脱敏。Windows 实机和真实 SSH 联机尚待验证，完整系统启动恢复也尚未演练。
+脱敏。真实 SSH 备份恢复和完整系统启动恢复尚未实机演练。
 
 ## 恢复边界
 

@@ -101,10 +101,11 @@ python build_desktop.py --smoke-test
 在目标操作系统上构建：Linux 生成 `dist/RestorePoint/RestorePoint`，Windows 生成
 `dist/RestorePoint/RestorePoint.exe`。整个 RestorePoint 目录需一起分发，不能只复制
 单个可执行文件。Linux 二进制与构建环境的 glibc/架构有关，若需要兼容更老发行版，
-应在最老的目标系统上构建。本机没有 Windows 运行环境，Windows 包需在 Windows
-按相同步骤构建并实测；不会把 Linux 打包结果称为 Windows 二进制。
-项目附带 `.github/workflows/desktop.yml`，作为 GitHub 仓库时可手动触发 Linux/Windows
-测试及打包流水线。可以在仓库的 Actions 页面手动触发。
+应在最老的目标系统上构建。Windows 包由 Windows 构建环境生成。
+项目附带 `.github/workflows/desktop.yml`，可在仓库 Actions 页面手动触发，在
+Ubuntu 22.04 和 Windows 运行器上执行测试、编译与离屏启动检查。
+在成功任务的 Artifacts 中下载对应平台的程序包，解压后进入 RestorePoint 目录运行；
+Windows 双击 RestorePoint.exe，Linux 运行 RestorePoint，无需安装 Python。
 
 根目录 `pysidedeploy.spec` 保存可移植的部署配置，`pyproject.toml` 声明 Qt 项目文件。
 构建入口会在 `build/qt-deploy` 生成机器相关配置、应用图标及 Linux helper 的文本副本，
@@ -137,4 +138,4 @@ GUI 测试使用 offscreen 平台和临时配置目录，不连接真实机器�
 QT_QPA_PLATFORM=offscreen python app.py --data-dir /tmp/restorepoint-preview --screenshot /tmp/overview.png
 ```
 
-完整系统启动恢复尚未实机演练。
+双平台自动构建与离屏启动检查已通过；真实 SSH 备份恢复和完整系统启动恢复尚未实机演练。
