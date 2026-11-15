@@ -13,7 +13,7 @@ GUI 通过后台任务调用 Linux 引擎，远程连接使用内置的 Paramiko
 - 恢复：用户 / 系统范围选择，远程上传、解包、预览，预览成功后执行恢复。
 - 连接与存储：多机器配置、SSH 密钥或密码认证、首次主机指纹确认、组件部署、
   配置导入导出，并可导入原 `remote.config.json`。
-- 任务日志：后台任务、传输进度、中断请求、持久化历史、日志查看及导出。
+- 底部任务面板：当前日志、任务名称、阶段、传输进度与中断操作跨页面共用，支持展开、收起和调整高度；历史任务单独查看及导出。
 - 使用帮助：在界面内说明两种模式的操作顺序、系统恢复条件和当前支持范围。
 
 ## 从源码运行
@@ -48,6 +48,8 @@ sudo、findmnt、dpkg-query、apt-mark；因此当前面向 Debian/Ubuntu 来源
 
 Linux 仓库通常只允许 root 读取，刷新本地版本时也可能需要 sudo 认证。
 原生 GUI 每个权限任务使用独立认证会话，密码不会跨任务保存。
+sudo 提示中的密码反馈、退格和 ANSI 控制序列会从展示、保存和导出的任务日志中清理。
+数字输入框和下拉框通过点击、键盘调整；滚轮用于滚动所在页面，不会修改字段值。
 
 ## 恢复
 
@@ -131,7 +133,7 @@ RestorePoint --runtime-info runtime.json
 源码回归测试：
 
 ```bash
-python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py
+python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py
 ```
 
 GUI 测试使用 offscreen 平台和临时配置目录，不连接真实机器，不执行真实系统备份。
@@ -141,4 +143,4 @@ GUI 测试使用 offscreen 平台和临时配置目录，不连接真实机器�
 QT_QPA_PLATFORM=offscreen python app.py --data-dir /tmp/restorepoint-preview --screenshot /tmp/overview.png
 ```
 
-双平台自动构建与离屏启动检查已通过；真实 SSH 备份恢复和完整系统启动恢复尚未实机演练。
+已完成 Windows 客户端经 SSH 对 Ubuntu 测试机的完整备份、上传、解包、预览和选定用户目录还原实测，文件 SHA-256、隐藏文件、权限、属主和符号链接均通过核对。完整系统启动恢复尚未实机演练。

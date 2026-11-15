@@ -21,6 +21,7 @@ import uuid
 from . import bundles
 from .models import validate_id
 from .runtime import application_executable, compiled_application, helper_source, resource_root
+from .terminal import LogLines, clean_log_text
 
 
 class Cancelled(RuntimeError):
@@ -72,6 +73,11 @@ def run_local(command, context, privileged=False):
     reader = threading.Thread(target=read_output, daemon=True)
     reader.start()
     decoder, output, ended = codecs.getincrementaldecoder('utf-8')('replace'), [], False
+    lines = LogLines()
+    def record(line):
+        output.append(line + '\n')
+        if not line.startswith('RP_RESULT='):
+            context.log(line)
     try:
         while not ended:
             context.check()
@@ -82,10 +88,10 @@ def run_local(command, context, privileged=False):
             if chunk is None:
                 ended = True
                 continue
-            text = decoder.decode(chunk).replace('__RESTOREPOINT_SUDO__', '')
-            output.append(text)
-            if 'RP_RESULT=' not in text:
-                context.log(text.rstrip())
+            for line in lines.feed(decoder.decode(chunk)):
+                record(line)
+        for line in lines.feed(decoder.decode(b'', final=True)) + lines.finish():
+            record(line)
         code = process.wait()
         if code != 0:
             raise RuntimeError(f'操作失败，退出码 {code}。\n' + ''.join(output)[-3000:])
@@ -222,18 +228,20 @@ class RemoteConnection:
             while True:
                 self.context.check()
                 if channel.recv_ready():
-                    text = decoder.decode(channel.recv(32768)).replace('\r', '')
+                    text = decoder.decode(channel.recv(32768))
                     pending += text
                     while marker in pending:
                         pending = pending.replace(marker, '', 1)
                         prompts += 1
                         if prompts > 3:
                             raise RuntimeError('sudo 认证失败。')
+                        self.context.log('验证测试机管理员权限')
                         secret = self.context.ask('password', {'title': '测试机管理员认证', 'text': f'请输入测试机用户 {self.username} 的 sudo 密码。'})
                         channel.sendall((secret + '\n').encode())
                         secret = None
                     while '\n' in pending:
                         line, pending = pending.split('\n', 1)
+                        line = clean_log_text(line)
                         output.append(line + '\n')
                         if line and not line.startswith('RP_RESULT='):
                             self.context.log(line)
@@ -242,8 +250,10 @@ class RemoteConnection:
                 else:
                     time.sleep(0.04)
             if pending:
+                pending = clean_log_text(pending)
                 output.append(pending)
-                self.context.log(pending)
+                if pending and not pending.startswith('RP_RESULT='):
+                    self.context.log(pending)
             code = channel.recv_exit_status()
             if code:
                 raise RuntimeError(f'测试机操作失败，退出码 {code}。\n' + ''.join(output)[-2500:])

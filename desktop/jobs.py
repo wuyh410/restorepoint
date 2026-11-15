@@ -5,6 +5,7 @@ import time
 from PySide6.QtCore import QThread, Signal
 
 from .backend import Cancelled, LocalService, RemoteService
+from .terminal import clean_log_text
 
 
 @dataclass
@@ -35,6 +36,10 @@ class Job(QThread):
             raise Cancelled('任务已中断。')
 
     def log(self, message):
+        message = str(message)
+        for secret in self.secrets:
+            message = message.replace(secret, '••••')
+        message = clean_log_text(message)
         for secret in self.secrets:
             message = message.replace(secret, '••••')
         if message:
@@ -71,6 +76,6 @@ class Job(QThread):
             message = str(exc)
             for secret in self.secrets:
                 message = message.replace(secret, '••••')
-            self.failed.emit(message)
+            self.failed.emit(clean_log_text(message))
         finally:
             self.secrets.clear()

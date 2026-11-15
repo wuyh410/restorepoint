@@ -13,7 +13,7 @@ Windows 或 Linux 客户端通过 SSH 管理 Linux 测试机的备份与恢复�
 - 版本列表、搜索、详情与 SHA-256 校验。
 - 用户文件恢复和系统恢复预览；预览后显式执行恢复。
 - 多机器配置、SSH 密钥 / 密码认证、主机指纹核对和远程组件部署。
-- 后台任务、实际传输进度、取消请求、任务历史与日志导出。
+- 跨页面共用的底部任务面板，将当前日志、任务状态、实际传输进度与取消操作放在一起；支持查看历史和导出日志。
 - 原本的 Python / PowerShell 命令行入口继续保留。
 
 ## 支持范围
@@ -88,21 +88,23 @@ Linux 二进制与构建系统的 glibc 和 CPU 架构有关，需要兼容旧�
 ## 验证
 
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py
 ```
 
 Windows 运行桌面层测试：
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
-.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py
+.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py test_ui_updates.py
 ```
 
 Linux 开发环境已完成隔离测试、Qt 离屏渲染与构建程序启动检查。
 GitHub Actions 已在 Ubuntu 22.04 和 Windows 运行器上通过测试、Nuitka 编译与
 离屏界面启动检查；Windows 跳过仅适用 Linux 的测试。
 测试覆盖本地版本、元数据还原、损坏包拦截、恢复保护、文件传输适配、后台任务及日志
-脱敏。真实 SSH 备份恢复和完整系统启动恢复尚未实机演练。
+脱敏、滚轮防误改、下拉列表布局和跨页面日志状态。
+已实测 Windows 客户端经 SSH 对 Ubuntu 测试机的完整备份、上传、解包、预览和选定用户目录还原，
+文件校验、权限、属主及符号链接均通过核对。完整系统启动恢复尚未实机演练。
 
 ## 恢复边界
 

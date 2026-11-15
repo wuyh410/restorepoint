@@ -35,7 +35,7 @@ jobs:
           Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -OutFile (Join-Path $fontDirectory 'NotoSansCJKsc-Regular.otf')
           "QT_QPA_FONTDIR=$fontDirectory" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Test desktop adapters and Qt widgets
-        run: python -m unittest -v test_desktop.py test_deployment.py
+        run: python -m unittest -v test_desktop.py test_deployment.py test_ui_updates.py
         env:
           QT_QPA_PLATFORM: offscreen
           RESTOREPOINT_UI_ARTIFACT_DIR: build/ui-checks

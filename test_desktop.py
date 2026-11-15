@@ -346,7 +346,7 @@ class DesktopUiTest(unittest.TestCase):
                 self.app.processEvents()
                 window = MainWindow(temp)
                 self.assertEqual(window.profiles, [])
-                for page in range(6):
+                for page in range(5):
                     window.navigation.setCurrentRow(page)
                     self.app.processEvents()
                 window.add_profile()
@@ -443,7 +443,7 @@ class DesktopUiTest(unittest.TestCase):
             window.close()
             self.app.processEvents()
 
-    def test_six_pages_settings_save_and_preview_invalidation(self):
+    def test_five_pages_settings_save_and_preview_invalidation(self):
         from desktop.jobs import Job
         from desktop.window import MainWindow
         with tempfile.TemporaryDirectory() as temp:
@@ -456,10 +456,10 @@ class DesktopUiTest(unittest.TestCase):
                 window = MainWindow(temp)
                 window.show()
                 self.app.processEvents()
-                self.assertEqual(window.pages.count(), 6)
+                self.assertEqual(window.pages.count(), 5)
                 self.assertEqual(window.table.rowCount(), 1)
                 self.assertFalse(window.apply_button.isEnabled())
-                for page in range(6):
+                for page in range(5):
                     window.navigation.setCurrentRow(page)
                     self.app.processEvents()
                     self.assertEqual(window.pages.currentIndex(), page)

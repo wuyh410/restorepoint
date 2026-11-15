@@ -21,10 +21,19 @@ from . import VERSION, bundles
 from .backend import resource_root
 from .jobs import Job
 from .models import Profile, SettingsStore, import_legacy, validate_id
+from .task_panel import TaskPanel
+from .terminal import clean_log_text
+from .widgets import ComboItemDelegate, ValueComboBox, ValueSpinBox
 
 ACTIONS = {'connect': '检查连接', 'install': '部署组件', 'plan': '环境检查', 'backup': '创建备份',
            'catalog': '刷新版本', 'verify': '完整性校验', 'fetch': '取回备份', 'upload': '上传备份',
            'unpack': '解包备份', 'restore': '恢复预览', 'remove_export': '清理导出包'}
+
+
+def action_title(action, arguments=None):
+    if action == 'restore' and (arguments or {}).get('apply'):
+        return '执行恢复'
+    return ACTIONS[action]
 
 STYLE = """
 * { font-family: 'Noto Sans CJK SC', 'Microsoft YaHei UI', 'Segoe UI', sans-serif; font-size: 13px; }
@@ -66,8 +75,8 @@ QComboBox#profileSelector::drop-down:hover { background: #355172; }
 QComboBox#profileSelector::down-arrow { image: url("__ASSETS__/chevron-down-light.svg"); }
 QSpinBox { padding-right: 38px; }
 QSpinBox QLineEdit { background: transparent; color: #24344c; border: 0; border-radius: 0; padding: 0; min-height: 0; }
-QSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 30px; background: #f8fafc; border-left: 1px solid #d8e0eb; border-bottom: 1px solid #d8e0eb; border-top-right-radius: 5px; }
-QSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 30px; background: #f8fafc; border-left: 1px solid #d8e0eb; border-bottom-right-radius: 5px; }
+QSpinBox::up-button { subcontrol-origin: border; subcontrol-position: top right; width: 30px; background: #f8fafc; border: 1px solid #b9c7dc; border-top-right-radius: 5px; }
+QSpinBox::down-button { subcontrol-origin: border; subcontrol-position: bottom right; width: 30px; background: #f8fafc; border: 1px solid #b9c7dc; border-top: 0; border-bottom-right-radius: 5px; }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover { background: #edf2fa; }
 QSpinBox::up-button:pressed, QSpinBox::down-button:pressed { background: #dfe9fc; }
 QSpinBox::up-button:disabled, QSpinBox::down-button:disabled { background: #f0f2f6; }
@@ -79,6 +88,17 @@ QTableWidget::item { padding: 8px; border: 0; }
 QPlainTextEdit, QTextBrowser { background: white; color: #314560; border: 1px solid #e2e7ef; border-radius: 8px; padding: 12px; }
 QProgressBar { background: #e5ebf4; border: 0; border-radius: 4px; height: 8px; text-align: center; }
 QProgressBar::chunk { background: #4676e9; border-radius: 4px; }
+QProgressBar[taskState="失败"]::chunk { background: #c65a58; }
+QProgressBar[taskState="已取消"]::chunk { background: #96a3b7; }
+QFrame#taskPanel { background: white; border: 1px solid #d8e0eb; border-radius: 9px; }
+QFrame#taskPanel QPushButton { padding: 5px 10px; }
+QLabel#taskTitle { color: #24344c; font-weight: 600; }
+QLabel#taskOutcome { color: #315fe5; background: #edf2ff; border-radius: 5px; padding: 4px 8px; }
+QLabel#taskOutcome[taskState="已完成"] { color: #167a71; background: #e4f4ef; }
+QLabel#taskOutcome[taskState="失败"] { color: #ad4644; background: #fff0ee; }
+QLabel#taskOutcome[taskState="已取消"] { color: #65758d; background: #edf0f5; }
+QPlainTextEdit#taskConsole { font-family: 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace; font-size: 12px; padding: 7px; border-radius: 5px; }
+QSplitter::handle:vertical { background: #e2e7ef; height: 5px; margin: 1px 0; }
 QScrollArea { border: 0; background: transparent; }
 QStatusBar { background: #eef2f7; color: #63758e; border-top: 1px solid #e0e6ee; }
 QToolTip { background: #14263e; color: white; border: 0; padding: 6px; }
@@ -107,17 +127,19 @@ def apply_theme(app):
 
 
 def combo_box():
-    widget = QComboBox()
+    widget = ValueComboBox()
     view = QListView(widget)
     view.setStyleSheet('''
         QListView { background: white; color: #24344c; border: 1px solid #d8e0eb; padding: 4px; outline: 0; }
-        QListView::item { min-height: 28px; padding: 4px 8px; color: #24344c; }
+        QListView::item { padding: 4px 8px; color: #24344c; }
         QListView::item:selected { background: #e8effc; color: #254fcb; }
         QListView::item:hover { background: #f0f4fc; }
         QListView::item:disabled { color: #8997ac; }
     ''')
     widget.setView(view)
-    widget.setItemDelegate(QStyledItemDelegate(view))
+    view.setUniformItemSizes(True)
+    view.setSpacing(2)
+    widget.setItemDelegate(ComboItemDelegate(view))
     widget.setMaxVisibleItems(12)
     return widget
 
@@ -192,7 +214,7 @@ class MainWindow(QMainWindow):
         side.addWidget(self.profile_combo)
         self.navigation = QListWidget()
         self.navigation.setObjectName('navigation')
-        for title in ('概览', '备份版本', '恢复数据', '连接与存储', '任务日志', '使用帮助'):
+        for title in ('概览', '备份版本', '恢复数据', '连接与存储', '使用帮助'):
             self.navigation.addItem(title)
         side.addWidget(self.navigation, 1)
         side.addWidget(label('Linux  /  Windows'))
@@ -209,34 +231,44 @@ class MainWindow(QMainWindow):
         heading.addWidget(self.badge)
         body.addLayout(heading)
         self.pages = QStackedWidget()
-        body.addWidget(self.pages, 1)
+        self.pages.setMinimumHeight(280)
+        self.task_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.task_splitter.setChildrenCollapsible(False)
+        self.task_splitter.setHandleWidth(6)
+        self.task_splitter.addWidget(self.pages)
+        body.addWidget(self.task_splitter, 1)
         outer.addWidget(content, 1)
         self.build_overview()
         self.build_versions()
         self.build_restore()
         self.build_settings()
-        self.build_logs()
+        self.build_history()
         self.build_help()
-        bottom = QHBoxLayout()
-        self.task_status = label('就绪 · 尚未执行任务', 'muted')
-        bottom.addWidget(self.task_status, 1)
-        self.progress = QProgressBar()
-        self.progress.setFixedWidth(210)
-        self.progress.setRange(0, 100)
-        self.progress.setValue(0)
-        self.progress.setTextVisible(False)
-        bottom.addWidget(self.progress)
-        self.cancel_button = QPushButton('取消任务')
-        self.cancel_button.setEnabled(False)
-        self.cancel_button.clicked.connect(self.cancel_task)
-        bottom.addWidget(self.cancel_button)
-        body.addLayout(bottom)
+        self.task_panel = TaskPanel()
+        self.task_splitter.addWidget(self.task_panel)
+        self.task_splitter.setStretchFactor(0, 1)
+        self.task_splitter.setStretchFactor(1, 0)
+        self.console = self.task_panel.console
+        self.task_status = self.task_panel.phase
+        self.progress = self.task_panel.progress
+        self.cancel_button = self.task_panel.cancel_button
+        self.task_panel.cancel_requested.connect(self.cancel_task)
+        self.task_panel.history_requested.connect(self.show_history)
+        self.task_panel.export_requested.connect(self.export_log)
+        self.task_panel.open_logs_requested.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.directory / 'logs'))))
+        self.task_panel.expanded_changed.connect(lambda expanded: QTimer.singleShot(0, lambda: self.resize_task_panel(expanded)))
         self.statusBar().showMessage('本机系统备份支持 Linux；两端客户端均可管理远程 Linux 测试机。')
         self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
         self.navigation.setCurrentRow(0)
         self.profile_combo.currentIndexChanged.connect(self.select_profile)
         self.reload_profiles(0)
         self.render_history()
+        self.restore_last_task()
+
+    def resize_task_panel(self, expanded):
+        total = sum(self.task_splitter.sizes())
+        height = 240 if expanded else 84
+        self.task_splitter.setSizes([max(280, total - height), height])
 
     def button(self, text, callback, primary=False, requires_profile=True):
         widget = QPushButton(text)
@@ -349,6 +381,16 @@ class MainWindow(QMainWindow):
 
     def build_restore(self):
         layout = self.page('恢复数据', '先预览将要恢复的内容，再执行恢复。系统恢复需要测试机处于 Live ISO 或救援环境。')
+        self.restore_scroll = QScrollArea()
+        self.restore_scroll.setWidgetResizable(True)
+        self.restore_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        content = QWidget()
+        content.setObjectName('workspace')
+        self.restore_scroll.setWidget(content)
+        layout.addWidget(self.restore_scroll, 1)
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 5, 0)
+        layout.setSpacing(16)
         widget, box = card()
         form = QFormLayout()
         form.setSpacing(16)
@@ -452,7 +494,7 @@ class MainWindow(QMainWindow):
         self.storage_row = row
         self.storage_label = label('备份包保存目录')
         form.addRow(self.storage_label, row)
-        self.reserve = QSpinBox()
+        self.reserve = ValueSpinBox()
         self.reserve.lineEdit().setTextMargins(8, 0, 0, 0)
         self.reserve.setRange(8, 65536)
         self.reserve.setSuffix(' GiB')
@@ -468,7 +510,7 @@ class MainWindow(QMainWindow):
             edit.setPlaceholderText(hint)
             self.fields[key] = edit
             form.addRow(title, edit)
-        self.port = QSpinBox()
+        self.port = ValueSpinBox()
         self.port.lineEdit().setTextMargins(8, 0, 0, 0)
         self.port.setRange(1, 65535)
         form.addRow('SSH 端口', self.port)
@@ -508,8 +550,13 @@ class MainWindow(QMainWindow):
         save.addWidget(self.saved_label)
         layout.addLayout(save)
 
-    def build_logs(self):
-        layout = self.page('任务日志', '查看运行输出、认证或空间错误，以及每次操作的完成状态。')
+    def build_history(self):
+        self.history_dialog = QDialog(self)
+        self.history_dialog.setWindowTitle('历史任务')
+        self.history_dialog.resize(960, 620)
+        layout = QVBoxLayout(self.history_dialog)
+        self.history_caption = label('选择历史任务查看日志。当前任务在主窗口底部持续更新。', 'muted')
+        layout.addWidget(self.history_caption)
         splitter = QSplitter(Qt.Orientation.Vertical)
         self.history_table = QTableWidget(0, 4)
         self.history_table.setHorizontalHeaderLabels(['时间', '配置', '任务', '结果'])
@@ -517,21 +564,18 @@ class MainWindow(QMainWindow):
         self.history_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.history_table.verticalHeader().hide()
         self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.history_table.cellDoubleClicked.connect(self.open_history)
+        self.history_table.cellClicked.connect(self.open_history)
         splitter.addWidget(self.history_table)
-        self.console = QPlainTextEdit()
-        self.console.setObjectName('taskConsole')
-        self.console.setReadOnly(True)
-        self.console.setMaximumBlockCount(4000)
-        self.console.setPlaceholderText('任务开始后，这里会显示实时日志。双击上方记录可查看历史日志。')
-        splitter.addWidget(self.console)
+        self.history_console = QPlainTextEdit()
+        self.history_console.setReadOnly(True)
+        splitter.addWidget(self.history_console)
         splitter.setSizes([190, 360])
         layout.addWidget(splitter, 1)
-        actions = QHBoxLayout()
-        actions.addWidget(self.button('导出当前日志', self.export_log, requires_profile=False))
-        actions.addWidget(self.button('打开日志目录', lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.directory / 'logs'))), requires_profile=False))
-        actions.addStretch()
-        layout.addLayout(actions)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        export = buttons.addButton('导出选中日志', QDialogButtonBox.ButtonRole.ActionRole)
+        export.clicked.connect(self.export_history_log)
+        buttons.rejected.connect(self.history_dialog.close)
+        layout.addWidget(buttons)
 
     def build_help(self):
         layout = self.page('使用帮助', '从配置到恢复的完整操作路径。')
@@ -838,8 +882,8 @@ class MainWindow(QMainWindow):
         logs = self.store.directory / 'logs'
         logs.mkdir(exist_ok=True)
         self.log_path = logs / (dt.datetime.now().strftime('%Y%m%d-%H%M%S-%f-') + profile.id[:8] + '-' + action + '.log')
-        self.console.clear()
-        self.append_log(f'{ACTIONS[action]} · {profile.name}')
+        self.task_panel.begin(f'{action_title(action, arguments)} · {profile.name}')
+        self.append_log(f'{action_title(action, arguments)} · {profile.name}')
         self.set_busy(True)
         self.job = Job(profile, action, self.store.directory, **arguments)
         self.job.message.connect(self.append_log)
@@ -863,20 +907,17 @@ class MainWindow(QMainWindow):
         self.apply_button.setEnabled(not busy and present and self.preview_signature is not None and self.preview_signature == self.signature())
         if busy:
             self.progress.setRange(0, 0)
-            self.task_status.setText(ACTIONS[self.active_action] + ' · 运行中')
 
     def append_log(self, text):
-        line = dt.datetime.now().strftime('%H:%M:%S') + '  ' + text
-        self.console.appendPlainText(line)
-        if self.log_path:
-            with self.log_path.open('a', encoding='utf-8') as stream:
-                stream.write(line + '\n')
+        for message in clean_log_text(text).splitlines():
+            line = dt.datetime.now().strftime('%H:%M:%S') + '  ' + message
+            self.console.appendPlainText(line)
+            if self.log_path:
+                with self.log_path.open('a', encoding='utf-8') as stream:
+                    stream.write(line + '\n')
 
     def progress_changed(self, value, text):
-        self.task_status.setText(text)
-        self.progress.setRange(0, 0 if value < 0 else 100)
-        if value >= 0:
-            self.progress.setValue(value)
+        self.task_panel.set_progress(value, clean_log_text(text))
 
     def answer_question(self, request):
         if request.kind == 'password':
@@ -909,8 +950,9 @@ class MainWindow(QMainWindow):
 
     def operation_failed(self, error):
         self.outcome = '失败'
+        error = clean_log_text(error)
         self.append_log('错误：' + error)
-        self.navigation.setCurrentRow(4)
+        self.task_panel.set_expanded(True)
         QMessageBox.warning(self, '操作未完成', error[-2500:])
 
     def operation_cancelled(self):
@@ -919,16 +961,15 @@ class MainWindow(QMainWindow):
 
     def operation_finished(self):
         self.history.append({'time': self.task_started, 'profile': self.active_profile.name, 'profile_id': self.active_profile.id,
-                             'action': ACTIONS[self.active_action], 'status': self.outcome, 'log': str(self.log_path)})
+                             'action': action_title(self.active_action, self.active_arguments), 'action_id': self.active_action,
+                             'arguments': self.active_arguments, 'status': self.outcome, 'log': str(self.log_path)})
         self.history = self.history[-500:]
         self.history_path.write_text(json.dumps(self.history, ensure_ascii=False, indent=2), encoding='utf-8')
         finished = self.job
         self.job = None
         finished.deleteLater()
         self.set_busy(False)
-        self.progress.setRange(0, 100)
-        self.progress.setValue(100 if self.outcome == '已完成' else 0)
-        self.task_status.setText(ACTIONS[self.active_action] + ' · ' + self.outcome)
+        self.task_panel.finish(self.outcome)
         self.render_history()
         self.update_stats()
         if self.pending_close:
@@ -943,15 +984,55 @@ class MainWindow(QMainWindow):
     def open_history(self, row, *_):
         try:
             entry = self.history[-1 - row]
-            self.console.setPlainText(Path(entry['log']).read_text(encoding='utf-8')[-1000000:])
+            text = self.read_log(entry)
+            self.history_console.setPlainText(text)
+            self.history_caption.setText(f"{entry['action']} · {entry['profile']} · {entry['status']}")
+            self.render_history()
         except OSError as exc:
             QMessageBox.warning(self, '无法读取日志', str(exc))
 
+    def read_log(self, entry):
+        with Path(entry['log']).open('rb') as stream:
+            stream.seek(max(0, stream.seek(0, 2) - 1000000))
+            text = clean_log_text(stream.read().decode('utf-8', 'replace'))
+        if entry.get('action_id'):
+            entry['action'] = action_title(entry['action_id'], entry.get('arguments'))
+        elif entry['action'] == '恢复预览' and any(line.split('  ', 1)[-1].strip() == '实际恢复' for line in text.splitlines()):
+            entry['action'] = '执行恢复'
+        return text
+
+    def show_history(self):
+        self.render_history()
+        if self.history:
+            self.history_table.selectRow(0)
+            self.open_history(0)
+        self.history_dialog.show()
+        self.history_dialog.raise_()
+        self.history_dialog.activateWindow()
+
+    def restore_last_task(self):
+        if self.history:
+            entry = self.history[-1]
+            try:
+                self.console.setPlainText(self.read_log(entry))
+            except OSError:
+                return
+            self.task_panel.title.setText(f"{entry['action']} · {entry['profile']}")
+            self.task_panel.finish(entry['status'])
+            self.task_panel.set_expanded(entry['status'] != '已完成')
+            self.render_history()
+
     def export_log(self):
+        self.export_log_text(self.console.toPlainText())
+
+    def export_history_log(self):
+        self.export_log_text(self.history_console.toPlainText())
+
+    def export_log_text(self, text):
         path = QFileDialog.getSaveFileName(self, '导出日志', 'restorepoint-task.log', 'Log (*.log)')[0]
         if path:
             try:
-                Path(path).write_text(self.console.toPlainText(), encoding='utf-8')
+                Path(path).write_text(text, encoding='utf-8')
             except OSError as exc:
                 QMessageBox.warning(self, '无法导出日志', str(exc))
 
@@ -971,6 +1052,7 @@ class MainWindow(QMainWindow):
                 self.cancel_task()
             event.ignore()
         else:
+            self.history_dialog.close()
             event.accept()
 
 
