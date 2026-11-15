@@ -1,6 +1,11 @@
 name: Desktop builds
 on:
   workflow_dispatch:
+    inputs:
+      ui_only:
+        description: Run checks and render UI screenshots without rebuilding executables
+        type: boolean
+        default: false
   push:
     tags: ['v*']
 jobs:
@@ -21,6 +26,14 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libegl1 libxkbcommon-x11-0 libxcb-cursor0 rsync
       - run: python -m pip install -r requirements-build.txt
+      - name: Provide fonts for Windows offscreen rendering
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $fontDirectory = Join-Path $env:RUNNER_TEMP 'restorepoint-ui-fonts'
+          New-Item -ItemType Directory -Force $fontDirectory | Out-Null
+          Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/notofonts/noto-cjk/f8d157532fbfaeda587e826d4cd5b21a49186f7c/Sans/OTF/SimplifiedChinese/NotoSansCJKsc-Regular.otf' -OutFile (Join-Path $fontDirectory 'NotoSansCJKsc-Regular.otf')
+          "QT_QPA_FONTDIR=$fontDirectory" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
       - name: Test desktop adapters and Qt widgets
         run: python -m unittest -v test_desktop.py test_deployment.py
         env:
@@ -30,13 +43,15 @@ jobs:
         if: runner.os == 'Linux'
         run: python -m unittest -v test_snapshot.py test_portable.py
       - run: python build_desktop.py --smoke-test
+        if: ${{ !inputs.ui_only }}
       - name: Package Linux application
-        if: runner.os == 'Linux'
+        if: ${{ runner.os == 'Linux' && !inputs.ui_only }}
         run: tar -C dist -czf dist/RestorePoint-Linux.tar.gz RestorePoint
       - name: Package Windows application
-        if: runner.os == 'Windows'
+        if: ${{ runner.os == 'Windows' && !inputs.ui_only }}
         run: Compress-Archive -Path dist/RestorePoint -DestinationPath dist/RestorePoint-Windows.zip
       - uses: actions/upload-artifact@v7.0.2
+        if: ${{ !inputs.ui_only }}
         with:
           name: RestorePoint-${{ runner.os }}
           path: |

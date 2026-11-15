@@ -383,7 +383,7 @@ class DesktopUiTest(unittest.TestCase):
 
     def test_combo_text_popup_and_spin_buttons_work_after_a_dark_system_palette(self):
         from PySide6.QtCore import Qt
-        from PySide6.QtGui import QColor, QPalette
+        from PySide6.QtGui import QColor, QPalette, QRawFont
         from PySide6.QtTest import QTest
         from PySide6.QtWidgets import QStyle, QStyleOptionComboBox, QStyleOptionSpinBox
         from desktop.window import MainWindow, apply_theme
@@ -401,6 +401,9 @@ class DesktopUiTest(unittest.TestCase):
             self.app.processEvents()
             combo = window.profile_combo
             self.assertEqual(combo.currentText(), 'First profile')
+            rendered_font = QRawFont.fromFont(combo.font())
+            self.assertTrue(rendered_font.isValid(), 'The UI test environment must provide a real font')
+            self.assertNotIn(0, rendered_font.glyphIndexesForString('First profile'))
             option = QStyleOptionComboBox()
             combo.initStyleOption(option)
             text_rect = combo.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option, QStyle.SubControl.SC_ComboBoxEditField, combo)
