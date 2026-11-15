@@ -69,10 +69,15 @@ SSH / sudo 密码仅供当前任务使用，不写入配置或日志。配置导
 在目标操作系统上执行：
 
 ```bash
-python -m pip install -r requirements-gui.txt pyinstaller
-python build_desktop.py
+python -m pip install -r requirements-build.txt
+python build_desktop.py --smoke-test
 ```
 
+默认构建使用 Qt 官方 **pyside6-deploy / Nuitka**，不需要 PyInstaller。
+开发机需要 C/C++ 编译器和 Python 开发头文件；Linux 使用 GCC，Windows 使用
+Visual Studio 2022 或更新版本的 C++ 工具链。具体步骤见 [构建说明](GUI.md#qt-官方构建)。
+
+采用 standalone 整目录分发，用户不需要另外安装 Python 或 Qt。
 Linux 输出 `dist/RestorePoint/RestorePoint`，Windows 输出
 `dist/RestorePoint/RestorePoint.exe`。分发时需保留整个 `RestorePoint` 目录。
 Linux 二进制与构建系统的 glibc 和 CPU 架构有关，需要兼容旧系统时应在对应系统上构建。
@@ -83,17 +88,17 @@ Linux 二进制与构建系统的 glibc 和 CPU 架构有关，需要兼容旧�
 ## 验证
 
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py
 ```
 
 Windows 运行桌面层测试：
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
-.venv/Scripts/python.exe -m unittest -v test_desktop.py
+.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py
 ```
 
-Linux 开发环境已通过 23 项隔离测试，并完成 Qt 离屏渲染与打包程序启动检查。
+Linux 开发环境已完成隔离测试、Qt 离屏渲染与构建程序启动检查。
 测试覆盖本地版本、元数据还原、损坏包拦截、恢复保护、文件传输适配、后台任务及日志
 脱敏。Windows 实机和真实 SSH 联机尚待验证，完整系统启动恢复也尚未演练。
 

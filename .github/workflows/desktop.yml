@@ -14,15 +14,15 @@ jobs:
       - uses: actions/setup-python@v7.1.0
         with:
           python-version: '3.12'
-      - run: python -m pip install -r requirements-gui.txt pyinstaller
+      - run: python -m pip install -r requirements-build.txt
       - name: Test desktop adapters and Qt widgets
-        run: python -m unittest -v test_desktop.py
+        run: python -m unittest -v test_desktop.py test_deployment.py
         env:
           QT_QPA_PLATFORM: offscreen
       - name: Test Linux backup engines
         if: runner.os == 'Linux'
         run: python -m unittest -v test_snapshot.py test_portable.py
-      - run: python build_desktop.py
+      - run: python build_desktop.py --smoke-test
       - name: Package Linux application
         if: runner.os == 'Linux'
         run: tar -C dist -czf dist/RestorePoint-Linux.tar.gz RestorePoint

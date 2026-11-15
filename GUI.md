@@ -78,12 +78,22 @@ Linux 仓库通常只允许 root 读取，刷新本地版本时也可能需要 s
 额外的 `/home`、`/boot`、EFI 等挂载布局会停止，尚未实现多文件系统自动备份。
 Windows 的备份包目录请使用适当的 NTFS 访问权限保护，包内包含系统和用户私密数据。
 
-## 测试及打包
+## Qt 官方构建
+
+默认使用 Qt 官方的 `pyside6-deploy`，由 Nuitka 编译成 standalone 分发目录。
+不需要 PyInstaller，也不会把 `.venv` 复制给最终用户。用户保留整个输出目录即可启动。
+源码直接运行方式仍然保留。
+
+构建环境需要 Python 3.10+ 及开发头文件、C/C++ 编译器。Linux 使用 GCC / G++；
+Windows 使用 Visual Studio 2022 或更新版本的「使用 C++ 的桌面开发」工具链。
+建议构建时使用 Python 3.12。Linux 的系统 Python 若不含开发头文件，可以安装与
+Python 版本对应的开发包，或使用带头文件的独立构建 Python；无需修改应用代码。
+
+激活构建虚拟环境后执行：
 
 ```bash
-python -m unittest -v test_snapshot.py test_portable.py test_desktop.py
-python -m pip install pyinstaller
-python build_desktop.py
+python -m pip install -r requirements-build.txt
+python build_desktop.py --smoke-test
 ```
 
 在目标操作系统上构建：Linux 生成 `dist/RestorePoint/RestorePoint`，Windows 生成
@@ -93,6 +103,30 @@ python build_desktop.py
 按相同步骤构建并实测；不会把 Linux 打包结果称为 Windows 二进制。
 项目附带 `.github/workflows/desktop.yml`，作为 GitHub 仓库时可手动触发 Linux/Windows
 测试及打包流水线。可以在仓库的 Actions 页面手动触发。
+
+根目录 `pysidedeploy.spec` 保存可移植的部署配置，`pyproject.toml` 声明 Qt 项目文件。
+构建入口会在 `build/qt-deploy` 生成机器相关配置、应用图标及 Linux helper 的文本副本，
+再调用 `pyside6-deploy --no-install`；所有依赖必须提前安装，不会在编译时自动改包版本。
+实际 Nuitka 中间产物位于 `deployment/`，缓存和临时文件位于 `build/`。
+
+Linux 引擎以编译模块包含在程序中，子进程直接以 `--engine` 重新进入同一可执行文件。
+远程部署所需的三个 Python 原始脚本以 `helpers/*.py.txt` 作为数据资源保留，上传时恢复
+原始 `.py` 文件名。构建完成会核对运行标记、子进程参数和 helper 的 SHA-256，检查通过
+后才替换 `dist/RestorePoint`。原来的输出目录会保留在 `build/previous-dist-*`。
+
+`--smoke-test` 会离屏打开界面并退出；Linux 还会调用只读环境检查，不会运行备份或恢复。
+可以先用 `python build_desktop.py --dry-run` 查看 Qt 最终生成的 Nuitka 命令，或通过
+`--jobs 2` 调整编译并发。Windows 无控制台程序的运行诊断也可写入文件：
+
+```text
+RestorePoint --runtime-info runtime.json
+```
+
+源码回归测试：
+
+```bash
+python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py
+```
 
 GUI 测试使用 offscreen 平台和临时配置目录，不连接真实机器，不执行真实系统备份。
 可以离屏渲染查看界面，截图后自动退出：

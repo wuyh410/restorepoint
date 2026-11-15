@@ -20,18 +20,15 @@ import uuid
 
 from . import bundles
 from .models import validate_id
+from .runtime import application_executable, compiled_application, helper_source, resource_root
 
 
 class Cancelled(RuntimeError):
     pass
 
 
-def resource_root():
-    return Path(getattr(sys, '_MEIPASS', Path(__file__).resolve().parent.parent))
-
-
 def engine_command(engine, arguments):
-    prefix = [sys.executable] if getattr(sys, 'frozen', False) else [sys.executable, str(resource_root() / 'app.py')]
+    prefix = [application_executable()] if compiled_application() else [sys.executable, str(resource_root() / 'app.py')]
     return prefix + ['--engine', engine] + list(arguments)
 
 
@@ -271,7 +268,7 @@ class RemoteConnection:
         with self.client.open_sftp() as sftp:
             for name in ('snapshot.py', 'portable.py', 'gui_bridge.py'):
                 self.context.check()
-                sftp.put(str(resource_root() / name), directory + '/' + name)
+                sftp.put(str(helper_source(name)), directory + '/' + name)
                 sftp.chmod(directory + '/' + name, 0o600)
         installer = """import os,pathlib,shutil,sys,tempfile
 if sys.platform!='linux': raise SystemExit('The backup source must be Linux')

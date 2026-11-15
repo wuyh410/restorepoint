@@ -1,4 +1,7 @@
 .venv/
+.build-venv/
+deployment/
+deploy_main.py
 __pycache__/
 *.pyc
 build/

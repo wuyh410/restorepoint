@@ -1,0 +1,15 @@
+[tool.pyside6-project]
+files = [
+    "app.py",
+    "desktop/__init__.py",
+    "desktop/backend.py",
+    "desktop/bundles.py",
+    "desktop/jobs.py",
+    "desktop/models.py",
+    "desktop/runtime.py",
+    "desktop/window.py",
+    "snapshot.py",
+    "portable.py",
+    "gui_bridge.py",
+    "assets/icon.svg",
+]
