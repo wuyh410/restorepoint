@@ -91,7 +91,7 @@ def main():
     include = Path(sysconfig.get_path('include')) / 'Python.h'
     if not args.dry_run and not include.exists():
         raise SystemExit('Python development headers are missing: ' + str(include) + '\nUse a build Python with development headers, or install the matching development package.')
-    tool = Path(sys.executable).parent / ('pyside6-deploy.exe' if sys.platform == 'win32' else 'pyside6-deploy')
+    tool = Path(sysconfig.get_path('scripts')) / ('pyside6-deploy.exe' if sys.platform == 'win32' else 'pyside6-deploy')
     if not tool.is_file():
         raise SystemExit('Install build dependencies: python -m pip install -r requirements-build.txt')
     spec, output = prepare(root, args.jobs)
@@ -101,7 +101,7 @@ def main():
     if args.dry_run:
         command.append('--dry-run')
     env = dict(os.environ)
-    env['PATH'] = str(Path(sys.executable).parent) + os.pathsep + env.get('PATH', '')
+    env['PATH'] = os.pathsep.join((str(tool.parent), str(Path(sys.executable).parent), env.get('PATH', '')))
     env['NUITKA_CACHE_DIR'] = str(root / 'build/nuitka-cache')
     temporary = root / 'build/tmp'
     temporary.mkdir(parents=True, exist_ok=True)
