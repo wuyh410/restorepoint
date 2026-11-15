@@ -88,6 +88,8 @@ Windows 的备份包目录请使用适当的 NTFS 访问权限保护，包内包
 Windows 使用 Visual Studio 2022 或更新版本的「使用 C++ 的桌面开发」工具链。
 建议构建时使用 Python 3.12。Linux 的系统 Python 若不含开发头文件，可以安装与
 Python 版本对应的开发包，或使用带头文件的独立构建 Python；无需修改应用代码。
+最小化 Debian/Ubuntu 构建环境还需 Qt 的系统运行库，例如 `libegl1`、
+`libxkbcommon-x11-0`、`libxcb-cursor0`；附带的 Linux CI 会安装这些依赖。
 
 激活构建虚拟环境后执行：
 
