@@ -20,7 +20,7 @@ class DeploymentTest(unittest.TestCase):
             executable.write_bytes(b'fixture')
             with mock.patch.object(runtime, '__compiled__', object(), create=True), mock.patch.object(sys, 'argv', [str(executable)]), mock.patch.object(sys, 'executable', str(Path(temp) / 'missing-python')):
                 command = backend.engine_command('gui_bridge', ['doctor'])
-            self.assertEqual(command, [str(executable), '--engine', 'gui_bridge', 'doctor'])
+            self.assertEqual(command, [str(executable.resolve()), '--engine', 'gui_bridge', 'doctor'])
 
     def test_source_child_still_uses_the_source_entry_point(self):
         self.assertFalse(runtime.compiled_application())
@@ -62,7 +62,7 @@ class DeploymentTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             report = Path(temp) / 'runtime.json'
             subprocess.run([sys.executable, str(runtime.resource_root() / 'app.py'), '--runtime-info', str(report)], check=True)
-            data = json.loads(report.read_text())
+            data = json.loads(report.read_text(encoding='utf-8'))
             self.assertFalse(data['compiled'])
             for name in build_desktop.HELPERS:
                 self.assertEqual(data['helpers'][name]['sha256'], hashlib.sha256((runtime.resource_root() / name).read_bytes()).hexdigest())

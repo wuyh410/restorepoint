@@ -58,7 +58,7 @@ class DesktopBackendTest(unittest.TestCase):
             profile = Profile(name='中文配置', host='fixture', storage=str(Path(temp) / 'backups'))
             store.save([profile])
             self.assertEqual(asdict(store.load()[0]), asdict(profile))
-            self.assertNotIn('password', store.path.read_text())
+            self.assertNotIn('password', store.path.read_text(encoding='utf-8'))
             legacy = import_legacy({'SshTarget': 'tester@example.test', 'BackupRoot': '/tmp/archive', 'MachineName': 'vm'})
             self.assertEqual((legacy.host, legacy.username), ('example.test', 'tester'))
             self.assertEqual(Path(legacy.storage).as_posix(), '/tmp/archive/vm')
