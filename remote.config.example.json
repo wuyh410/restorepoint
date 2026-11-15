@@ -1,0 +1,12 @@
+{
+  "SshTarget": "test-machine",
+  "Port": 22,
+  "IdentityFile": "",
+  "BackupRoot": "D:\\TestBackups",
+  "MachineName": "test-machine",
+  "RemoteHelper": "/usr/local/lib/test-backup/portable.py",
+  "ExportRoot": "/var/backups/portable-snapshots",
+  "RestoreInbox": "/home/your-user/.cache/test-backup-inbox",
+  "RestoreStagingRoot": "/var/tmp/test-backup-restore",
+  "ReserveGiB": 8
+}
