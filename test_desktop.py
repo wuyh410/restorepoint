@@ -410,9 +410,6 @@ class DesktopUiTest(unittest.TestCase):
             self.assertGreater(sum(color.red() < 80 and color.green() < 100 for color in pixels), len(pixels) // 3)
             combo.showPopup()
             self.app.processEvents()
-            # Qt initially ignores mouse release events to avoid selecting an
-            # item with the click that opened the popup. Let that guard expire.
-            QTest.qWait(300)
             view = combo.view()
             index = combo.model().index(1, 0)
             rect = view.visualRect(index)
@@ -421,8 +418,10 @@ class DesktopUiTest(unittest.TestCase):
             self.assertGreater(sum(color.red() < 100 and color.green() < 120 and color.blue() < 150 for color in pixels), 10)
             self.assertGreater(sum(color.red() > 240 and color.green() > 240 and color.blue() > 240 for color in pixels), len(pixels) // 3)
             self.save_artifact('configuration-popup.png', view.window())
-            QTest.mouseMove(view.viewport(), rect.center())
-            QTest.mouseClick(view.viewport(), Qt.MouseButton.LeftButton, pos=rect.center())
+            # Exercise popup selection with real key events; offscreen CI
+            # backends do not provide a native popup mouse grab.
+            QTest.keyClick(view, Qt.Key.Key_Down)
+            QTest.keyClick(view, Qt.Key.Key_Return)
             self.app.processEvents()
             self.assertEqual(combo.currentText(), 'Second profile')
             window.settings_scroll.ensureWidgetVisible(window.port)
