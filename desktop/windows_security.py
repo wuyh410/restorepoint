@@ -1,5 +1,6 @@
 """Native Windows permissions for application-owned SSH key material."""
 import ctypes
+import re
 from ctypes import wintypes as wt
 
 
@@ -81,3 +82,32 @@ def read_dacl(path):
             kernel.LocalFree(ctypes.cast(text, ctypes.c_void_p))
     finally:
         kernel.LocalFree(descriptor)
+
+
+def expand_sid(value):
+    """Normalize SDDL aliases such as local Administrator LA using Windows."""
+    adv, kernel = libraries()
+    kernel.LocalFree.argtypes = [ctypes.c_void_p]
+    adv.ConvertStringSidToSidW.argtypes = [wt.LPCWSTR, ctypes.POINTER(ctypes.c_void_p)]
+    adv.ConvertSidToStringSidW.argtypes = [ctypes.c_void_p, ctypes.POINTER(wt.LPWSTR)]
+    sid, text = ctypes.c_void_p(), wt.LPWSTR()
+    if not adv.ConvertStringSidToSidW(value, ctypes.byref(sid)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not adv.ConvertSidToStringSidW(sid, ctypes.byref(text)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            return text.value
+        finally:
+            kernel.LocalFree(ctypes.cast(text, ctypes.c_void_p))
+    finally:
+        kernel.LocalFree(sid)
+
+
+def private_acl_valid(path):
+    sddl = read_dacl(path)
+    entries = [entry.split(';') for entry in re.findall(r'\(([^()]*)\)', sddl)]
+    if not sddl.startswith('D:P') or not entries or any(len(entry) != 6 or entry[0] != 'A' or entry[2] != 'FA' for entry in entries):
+        return False
+    actual = {expand_sid(entry[5]) for entry in entries}
+    return actual == {current_sid(), 'S-1-5-18', 'S-1-5-32-544'}

@@ -158,13 +158,9 @@ class LocalKeyTest(unittest.TestCase):
                 self.assertEqual(repeated.fingerprint, local.fingerprint)
                 self.assertEqual(local.path.read_bytes(), before)
                 if sys.platform == 'win32':
-                    from desktop.windows_security import current_sid, read_dacl
+                    from desktop.windows_security import private_acl_valid
                     for path in (local.path, local.path.parent):
-                        acl = read_dacl(path)
-                        self.assertIn(current_sid(), acl)
-                        self.assertIn('D:P', acl)
-                        self.assertNotIn(';;;WD)', acl)
-                        self.assertNotIn(';;;BU)', acl)
+                        self.assertTrue(private_acl_valid(path))
                 else:
                     self.assertEqual(stat.S_IMODE(local.path.stat().st_mode), 0o600)
                     self.assertEqual(stat.S_IMODE(local.path.parent.stat().st_mode), 0o700)

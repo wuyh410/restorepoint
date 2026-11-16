@@ -61,9 +61,8 @@ def key_self_test():
             if repeated.created or repeated.fingerprint != key.fingerprint:
                 raise RuntimeError('Key reuse failed')
             if sys.platform == 'win32':
-                from desktop.windows_security import current_sid, read_dacl
-                acl = read_dacl(key.path)
-                if current_sid() not in acl or ';;;WD)' in acl or ';;;BU)' in acl:
+                from desktop.windows_security import private_acl_valid
+                if not private_acl_valid(key.path):
                     raise RuntimeError('Private key access control failed')
     return {'ok': True}
 
