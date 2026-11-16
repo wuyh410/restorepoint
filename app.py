@@ -7,12 +7,37 @@ def runtime_info():
     import hashlib
     from desktop.backend import engine_command
     from desktop.runtime import compiled_application, helper_source, resource_root
+    from desktop.credentials import system_backend
     helpers = {}
     for name in ('snapshot.py', 'portable.py', 'gui_bridge.py'):
         path = helper_source(name)
         helpers[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     return {'compiled': compiled_application(), 'resources': str(resource_root()),
+            'credential_backend': type(system_backend()).__module__,
             'engine_command': engine_command('gui_bridge', ['doctor']), 'helpers': helpers}
+
+
+def credential_self_test():
+    """Exercise a disposable credential in Windows CI, then remove it."""
+    import secrets
+    import tempfile
+    from desktop.credentials import CredentialStore
+    from desktop.models import Profile
+    if sys.platform != 'win32':
+        raise SystemExit('Credential self-test requires Windows.')
+    with tempfile.TemporaryDirectory(prefix='restorepoint-credential-check-') as directory:
+        store = CredentialStore(directory)
+        profile = Profile(host='isolated.invalid')
+        value = secrets.token_hex(24)
+        try:
+            store.save(profile, {'login': value})
+            if store.load(profile) != {'login': value}:
+                raise RuntimeError('Credential roundtrip failed')
+        finally:
+            store.delete(profile)
+        if store.load(profile):
+            raise RuntimeError('Credential cleanup failed')
+    return {'ok': True}
 
 
 def run_engine(name, arguments):
@@ -35,7 +60,11 @@ def run_engine(name, arguments):
 
 
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['--runtime-info']:
+    if sys.argv[1:2] == ['--credential-self-test'] and len(sys.argv) == 3:
+        import json
+        from pathlib import Path
+        Path(sys.argv[2]).write_text(json.dumps(credential_self_test()), encoding='utf-8')
+    elif sys.argv[1:2] == ['--runtime-info']:
         import json
         from pathlib import Path
         payload = json.dumps(runtime_info(), ensure_ascii=True, indent=2)

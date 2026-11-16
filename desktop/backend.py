@@ -173,7 +173,23 @@ class RemoteConnection:
                 client.get_host_keys().add(hostname, key.get_name(), key)
                 client.save_host_keys(str(known_hosts))
                 known_hosts.chmod(0o600)
-        secret = None
+        get_credential = getattr(context, 'get_credential', lambda kind: None)
+        login_secret, key_secret = get_credential('login'), get_credential('key')
+        private_key = None
+        if profile.identity_file and profile.auth_method != 'password':
+            for key_attempt in range(2):
+                try:
+                    private_key = paramiko.PKey.from_path(profile.identity_file,
+                        passphrase=key_secret.encode('utf-8') if key_secret else None)
+                    break
+                except (TypeError, ValueError, paramiko.SSHException) as exc:
+                    if key_attempt:
+                        raise RuntimeError('无法读取私钥，请检查私钥格式和解锁口令。') from exc
+                    key_secret = context.ask('password', {'title': '私钥解锁', 'text': '请输入私钥文件的解锁口令。',
+                                                          'credential': 'key', 'retry': bool(key_secret)})
+        if profile.auth_method == 'password' and not login_secret:
+            login_secret = context.ask('password', {'title': 'SSH 登录密码',
+                'text': f'请输入 {self.username}@{host} 的 SSH 登录密码。', 'credential': 'login'})
         for attempt in range(2):
             client = paramiko.SSHClient()
             client.load_system_host_keys()
@@ -186,10 +202,19 @@ class RemoteConnection:
             proxy = paramiko.ProxyCommand(configuration['proxycommand']) if configuration.get('proxycommand') else None
             try:
                 context.check()
-                client.connect(host, port=port, username=self.username, key_filename=identity or None,
-                               password=secret, passphrase=secret, timeout=12, auth_timeout=20, banner_timeout=12, sock=proxy)
+                password_mode = profile.auth_method == 'password'
+                client.connect(host, port=port, username=self.username,
+                               key_filename=identity or None if not private_key and not password_mode else None,
+                               pkey=private_key, allow_agent=profile.auth_method == 'auto',
+                               look_for_keys=profile.auth_method == 'auto',
+                               password=login_secret if profile.auth_method != 'key' else None,
+                               passphrase=key_secret, timeout=12, auth_timeout=20, banner_timeout=12, sock=proxy)
                 client.get_transport().set_keepalive(15)
                 self.client = client
+                accept = getattr(context, 'accept_credential', lambda *args: None)
+                if profile.auth_method != 'key':
+                    accept('login', login_secret)
+                accept('key', key_secret)
                 context.log(f'已连接 {self.username}@{host}:{port}')
                 return self
             except Exception as exc:
@@ -205,7 +230,15 @@ class RemoteConnection:
                     raise
                 if attempt:
                     raise RuntimeError('SSH 认证失败，请检查用户名、密码或私钥。') from exc
-                secret = context.ask('password', {'title': 'SSH 认证', 'text': f'请输入 {self.username}@{host} 的密码，或私钥解锁口令。'})
+                if isinstance(exc, paramiko.PasswordRequiredException):
+                    key_secret = context.ask('password', {'title': '私钥解锁', 'text': '请输入 SSH 私钥的解锁口令。',
+                                                          'credential': 'key', 'retry': bool(key_secret)})
+                elif profile.auth_method == 'key':
+                    raise RuntimeError('私钥认证失败，请确认对应公钥已安装到测试机，并检查 SSH 用户名。') from exc
+                else:
+                    login_secret = context.ask('password', {'title': 'SSH 登录密码',
+                        'text': f'请输入 {self.username}@{host} 的 SSH 登录密码。',
+                        'credential': 'login', 'retry': bool(login_secret)})
 
     def __exit__(self, *unused):
         if self.client:
@@ -224,6 +257,7 @@ class RemoteConnection:
         channel.exec_command(command)
         decoder = codecs.getincrementaldecoder('utf-8')('replace')
         output, pending, prompts = [], '', 0
+        sudo_secret = None
         try:
             while True:
                 self.context.check()
@@ -236,8 +270,10 @@ class RemoteConnection:
                         if prompts > 3:
                             raise RuntimeError('sudo 认证失败。')
                         self.context.log('验证测试机管理员权限')
-                        secret = self.context.ask('password', {'title': '测试机管理员认证', 'text': f'请输入测试机用户 {self.username} 的 sudo 密码。'})
+                        secret = self.context.ask('password', {'title': '测试机管理员认证', 'text': f'请输入测试机用户 {self.username} 的 sudo 密码。',
+                                                               'credential': 'sudo', 'retry': prompts > 1})
                         channel.sendall((secret + '\n').encode())
+                        sudo_secret = secret
                         secret = None
                     while '\n' in pending:
                         line, pending = pending.split('\n', 1)
@@ -257,6 +293,8 @@ class RemoteConnection:
             code = channel.recv_exit_status()
             if code:
                 raise RuntimeError(f'测试机操作失败，退出码 {code}。\n' + ''.join(output)[-2500:])
+            if sudo_secret:
+                getattr(self.context, 'accept_credential', lambda *args: None)('sudo', sudo_secret)
             return ''.join(output)
         except Cancelled:
             if root:

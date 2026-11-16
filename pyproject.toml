@@ -5,6 +5,7 @@ files = [
     "desktop/backend.py",
     "desktop/bundles.py",
     "desktop/jobs.py",
+    "desktop/credentials.py",
     "desktop/models.py",
     "desktop/runtime.py",
     "desktop/terminal.py",

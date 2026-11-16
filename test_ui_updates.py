@@ -91,10 +91,10 @@ class WorkspaceUpdatesTest(unittest.TestCase):
             SettingsStore(temp).save([Profile(name='First'), Profile(name='Second')])
             window = MainWindow(temp)
             window.show()
-            window.navigation.setCurrentRow(3)
+            window.show_page(3)
             self.app.processEvents()
             try:
-                for widget in (window.port, window.reserve, window.mode, window.profile_combo, window.restore_area):
+                for widget in (window.port, window.reserve, window.mode, window.auth_method, window.profile_combo, window.restore_area, window.restore_version):
                     for focused in (False, True):
                         widget.setFocus() if focused else widget.clearFocus()
                         before = widget.value() if hasattr(widget, 'value') else widget.currentIndex()
@@ -106,6 +106,10 @@ class WorkspaceUpdatesTest(unittest.TestCase):
                 window.settings_scroll.verticalScrollBar().setValue(0)
                 self.wheel(window.reserve)
                 self.assertGreater(window.settings_scroll.verticalScrollBar().value(), 0)
+                for widget in (window.remember_secrets, window.sudo_uses_login):
+                    before = widget.isChecked()
+                    self.wheel(widget)
+                    self.assertEqual(widget.isChecked(), before)
             finally:
                 window.close()
                 self.app.processEvents()
@@ -116,7 +120,7 @@ class WorkspaceUpdatesTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             window = MainWindow(temp)
             window.show()
-            window.navigation.setCurrentRow(2)
+            window.show_page(2)
             self.app.processEvents()
             combo = window.restore_area
             try:
@@ -166,14 +170,14 @@ class WorkspaceUpdatesTest(unittest.TestCase):
                     self.assertIn('UI fixture', window.task_panel.title.text())
                     self.assertNotIn('任务日志', [window.navigation.item(i).text() for i in range(window.navigation.count())])
                     for page in range(window.pages.count()):
-                        window.navigation.setCurrentRow(page)
+                        window.show_page(page)
                         self.app.processEvents()
                         self.assertTrue(window.console.isVisible())
                         self.assertIn('current task output', window.console.toPlainText())
-                    window.navigation.setCurrentRow(0)
+                    window.show_page(0)
                     self.app.processEvents()
                     self.artifact('shared-task-panel-overview.png', window)
-                    window.navigation.setCurrentRow(3)
+                    window.show_page(3)
                     self.app.processEvents()
                     self.artifact('shared-task-panel-settings.png', window)
                     window.show_history()
@@ -204,13 +208,13 @@ class WorkspaceUpdatesTest(unittest.TestCase):
             SettingsStore(temp).save([Profile(host='fixture')])
             window = MainWindow(temp)
             window.show()
-            window.navigation.setCurrentRow(3)
+            window.show_page(3)
             with mock.patch('desktop.jobs.RemoteService') as service, mock.patch.object(QMessageBox, 'warning'):
                 service.return_value.run.side_effect = RuntimeError('\x1b[31mfixture failure\x1b[0m')
                 window.start('plan')
                 self.assertTrue(window.job.wait(3000))
                 self.app.processEvents()
-            self.assertEqual(window.navigation.currentRow(), 3)
+            self.assertEqual(window.pages.currentIndex(), 3)
             self.assertEqual(window.task_panel.outcome.text(), '失败')
             self.assertLess(window.progress.value(), 100)
             self.assertNotIn('\x1b', window.console.toPlainText())

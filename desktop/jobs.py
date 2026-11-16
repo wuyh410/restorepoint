@@ -23,13 +23,29 @@ class Job(QThread):
     succeeded = Signal(object)
     failed = Signal(str)
     cancelled = Signal()
+    credential_accepted = Signal(str, str)
 
-    def __init__(self, profile, action, data_directory, **arguments):
+    def __init__(self, profile, action, data_directory, credentials=None, **arguments):
         super().__init__()
         self.profile, self.action, self.data_directory, self.arguments = profile, action, data_directory, arguments
         self.stop_event = threading.Event()
         self.secrets = []
         self.last_progress = 0
+        self.credentials = dict(credentials or {})
+        self.secrets.extend(value for value in self.credentials.values() if value)
+
+    def get_credential(self, kind):
+        value = self.credentials.get(kind)
+        if kind == 'sudo' and not value and self.profile.sudo_uses_login:
+            value = self.credentials.get('login')
+        return value
+
+    def accept_credential(self, kind, value):
+        if value:
+            self.credentials[kind] = value
+            if value not in self.secrets:
+                self.secrets.append(value)
+            self.credential_accepted.emit(kind, value)
 
     def check(self):
         if self.stop_event.is_set():
@@ -53,6 +69,11 @@ class Job(QThread):
 
     def ask(self, kind, data):
         self.check()
+        credential = data.get('credential') if kind == 'password' else None
+        if credential and not data.get('retry'):
+            value = self.get_credential(credential)
+            if value:
+                return value
         request = Question(kind, data)
         self.question.emit(request)
         while not request.event.wait(0.1):
@@ -79,3 +100,4 @@ class Job(QThread):
             self.failed.emit(clean_log_text(message))
         finally:
             self.secrets.clear()
+            self.credentials.clear()

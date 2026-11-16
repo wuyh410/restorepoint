@@ -56,11 +56,11 @@ def prepare(root, jobs):
     for name in DOCUMENTS:
         arguments.append('--include-data-files=' + str(root / name) + '=' + name)
     arguments += ['--include-data-dir=' + str(root / 'assets') + '=assets',
-                  '--include-distribution-metadata=PySide6,paramiko,cryptography',
+                  '--include-distribution-metadata=PySide6,paramiko,cryptography,keyring',
                   '--jobs=' + str(jobs), '--assume-yes-for-downloads',
                   '--disable-ccache', '--output-filename=' + ('RestorePoint.exe' if sys.platform == 'win32' else 'RestorePoint')]
     if sys.platform == 'win32':
-        arguments += ['--windows-console-mode=disable', '--msvc=latest']
+        arguments += ['--windows-console-mode=disable', '--msvc=latest', '--include-package=win32ctypes']
     # Keep every deployment output fresh. Qt's tool can merge an existing output
     # directory, which would otherwise retain libraries from earlier builds.
     output = root / 'build/qt-output' / uuid.uuid4().hex
@@ -132,6 +132,12 @@ def main():
             checked = subprocess.run(runtime['engine_command'], check=True, env=env, capture_output=True, text=True, timeout=30)
             if 'RP_RESULT=' not in checked.stdout:
                 raise SystemExit('The compiled Linux engine did not return its read-only doctor result.')
+        if sys.platform == 'win32':
+            checked_credentials = spec.parent / 'credential-check.json'
+            subprocess.run([str(result / executable), '--credential-self-test', str(checked_credentials)],
+                           check=True, env=env, timeout=30)
+            if not json.loads(checked_credentials.read_text(encoding='utf-8'))['ok']:
+                raise SystemExit('Compiled Windows Credential Manager check failed.')
         print('Smoke checks passed; no backup, restore or SSH action was executed.', flush=True)
     (result / 'build-info.json').write_text(json.dumps({
         'builder': 'pyside6-deploy/Nuitka', 'mode': 'standalone', 'platform': sys.platform,

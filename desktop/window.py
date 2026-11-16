@@ -10,7 +10,7 @@ import sys
 from PySide6.QtCore import QLockFile, QStandardPaths, Qt, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+    QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
     QFrame, QGridLayout, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QLineEdit,
     QListView, QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
     QPushButton, QScrollArea, QSizePolicy, QSpacerItem, QSpinBox, QSplitter, QStackedWidget,
@@ -21,9 +21,10 @@ from . import VERSION, bundles
 from .backend import resource_root
 from .jobs import Job
 from .models import Profile, SettingsStore, import_legacy, validate_id
+from .credentials import CredentialStore, CredentialError
 from .task_panel import TaskPanel
 from .terminal import clean_log_text
-from .widgets import ComboItemDelegate, ValueComboBox, ValueSpinBox
+from .widgets import ComboItemDelegate, ProfileComboBox, ValueComboBox, ValueSpinBox
 
 ACTIONS = {'connect': '检查连接', 'install': '部署组件', 'plan': '环境检查', 'backup': '创建备份',
            'catalog': '刷新版本', 'verify': '完整性校验', 'fetch': '取回备份', 'upload': '上传备份',
@@ -68,9 +69,9 @@ QComboBox::drop-down { subcontrol-origin: padding; subcontrol-position: top righ
 QComboBox::drop-down:hover { background: #edf2fa; }
 QComboBox::down-arrow { image: url("__ASSETS__/chevron-down.svg"); width: 14px; height: 14px; }
 QComboBox QLineEdit { background: transparent; color: #24344c; border: 0; padding: 0; min-height: 0; }
-QComboBox#profileSelector { background: #213852; color: #f8fafc; border-color: #38506d; }
+QComboBox#profileSelector { background: #213852; color: #f8fafc; border-color: #38506d; padding-left: 8px; padding-right: 4px; }
 QComboBox#profileSelector:disabled { color: #bac9dc; }
-QComboBox#profileSelector::drop-down { background: #2a4262; border-left-color: #38506d; }
+QComboBox#profileSelector::drop-down { width: 23px; background: #2a4262; border-left-color: #38506d; }
 QComboBox#profileSelector::drop-down:hover { background: #355172; }
 QComboBox#profileSelector::down-arrow { image: url("__ASSETS__/chevron-down-light.svg"); }
 QSpinBox { padding-right: 38px; }
@@ -126,8 +127,8 @@ def apply_theme(app):
     app.setStyleSheet(STYLE)
 
 
-def combo_box():
-    widget = ValueComboBox()
+def combo_box(profile=False):
+    widget = ProfileComboBox() if profile else ValueComboBox()
     view = QListView(widget)
     view.setStyleSheet('''
         QListView { background: white; color: #24344c; border: 1px solid #d8e0eb; padding: 4px; outline: 0; }
@@ -178,6 +179,10 @@ class MainWindow(QMainWindow):
         self.resize(1280, 860)
         self.setMinimumSize(1020, 720)
         self.store = SettingsStore(data_directory)
+        self.credential_store = CredentialStore(data_directory)
+        self.session_credentials = {}
+        self.credential_scope = None
+        self.loading_profile = False
         self.profiles = self.store.load()
         self.job = None
         self.rows = []
@@ -208,14 +213,16 @@ class MainWindow(QMainWindow):
         side.addWidget(label('RESTOREPOINT', 'muted'))
         side.addSpacing(20)
         side.addWidget(label('当前备份配置'))
-        self.profile_combo = combo_box()
+        self.profile_combo = combo_box(profile=True)
         self.profile_combo.setObjectName('profileSelector')
         self.profile_combo.setPlaceholderText('暂无配置')
         side.addWidget(self.profile_combo)
         self.navigation = QListWidget()
         self.navigation.setObjectName('navigation')
-        for title in ('概览', '备份版本', '恢复数据', '连接与存储', '使用帮助'):
-            self.navigation.addItem(title)
+        for title, page_index in [('概览', 0), ('1  连接与配置', 3), ('2  备份版本', 1), ('3  恢复数据', 2), ('使用帮助', 4)]:
+            item = QListWidgetItem(title)
+            item.setData(Qt.ItemDataRole.UserRole, page_index)
+            self.navigation.addItem(item)
         side.addWidget(self.navigation, 1)
         side.addWidget(label('Linux  /  Windows'))
         side.addWidget(label('桌面客户端  ·  v' + VERSION, 'muted'))
@@ -258,7 +265,7 @@ class MainWindow(QMainWindow):
         self.task_panel.open_logs_requested.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(str(self.store.directory / 'logs'))))
         self.task_panel.expanded_changed.connect(lambda expanded: QTimer.singleShot(0, lambda: self.resize_task_panel(expanded)))
         self.statusBar().showMessage('本机系统备份支持 Linux；两端客户端均可管理远程 Linux 测试机。')
-        self.navigation.currentRowChanged.connect(self.pages.setCurrentIndex)
+        self.navigation.currentRowChanged.connect(lambda row: self.pages.setCurrentIndex(self.navigation.item(row).data(Qt.ItemDataRole.UserRole)) if row >= 0 else None)
         self.navigation.setCurrentRow(0)
         self.profile_combo.currentIndexChanged.connect(self.select_profile)
         self.reload_profiles(0)
@@ -269,6 +276,12 @@ class MainWindow(QMainWindow):
         total = sum(self.task_splitter.sizes())
         height = 240 if expanded else 84
         self.task_splitter.setSizes([max(280, total - height), height])
+
+    def show_page(self, index):
+        for row in range(self.navigation.count()):
+            if self.navigation.item(row).data(Qt.ItemDataRole.UserRole) == index:
+                self.navigation.setCurrentRow(row)
+                break
 
     def button(self, text, callback, primary=False, requires_profile=True):
         widget = QPushButton(text)
@@ -301,6 +314,14 @@ class MainWindow(QMainWindow):
         layout.setSpacing(18)
         scroll.setWidget(content)
         outer.addWidget(scroll, 1)
+        guide, guide_box = card()
+        guide_box.addWidget(label('按这三步开始', 'section'))
+        steps = QHBoxLayout()
+        for title, index in [('1  连接与配置', 3), ('2  创建和管理备份', 1), ('3  预览并恢复数据', 2)]:
+            steps.addWidget(self.button(title, lambda checked=False, page=index: self.show_page(page), requires_profile=False))
+        guide_box.addLayout(steps)
+        guide_box.addWidget(label('先保存连接并检查环境，再创建备份；需要还原时，先预览再执行。', 'muted', True))
+        layout.addWidget(guide)
         stats = QHBoxLayout()
         self.stat_values = []
         for title, hint in [('备份版本', '当前仓库中的完整版本'), ('可用空间', '备份所在磁盘的可用空间'), ('最近任务', '当前配置的任务状态')]:
@@ -341,7 +362,7 @@ class MainWindow(QMainWindow):
         box.addLayout(grid)
         box.addWidget(label('默认排除临时文件、缓存、日志、交换文件和备份仓库自身。独立 /home、/boot 等挂载布局会提示停止。', 'muted', True))
         layout.addWidget(widget)
-        self.next_step = label('先在「连接与存储」中配置位置，再检查环境。', 'muted', True)
+        self.next_step = label('先在「连接与配置」中配置位置，再检查环境。', 'muted', True)
         layout.addWidget(self.next_step)
         layout.addStretch()
 
@@ -453,7 +474,7 @@ class MainWindow(QMainWindow):
         return row, edit
 
     def build_settings(self):
-        layout = self.page('连接与存储', '每台测试机使用独立配置。认证密码在任务中输入，配置文件只保存连接参数和路径。')
+        layout = self.page('连接与配置', '先配置连接与保存位置，再检查连接和部署组件。凭据可选保存在本机系统凭据库。')
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         tools = QHBoxLayout()
         tools.addWidget(self.button('新增配置', self.add_profile, requires_profile=False))
@@ -514,8 +535,36 @@ class MainWindow(QMainWindow):
         self.port.lineEdit().setTextMargins(8, 0, 0, 0)
         self.port.setRange(1, 65535)
         form.addRow('SSH 端口', self.port)
+        self.auth_method = combo_box()
+        for title, value in [('自动 · SSH 配置 / agent / 密钥 / 密码', 'auto'), ('密码认证', 'password'), ('私钥文件认证', 'key')]:
+            self.auth_method.addItem(title, value)
+        form.addRow('认证方式', self.auth_method)
         row, self.fields['identity_file'] = self.path_field('可选；留空使用 SSH agent、默认密钥或密码', False)
+        self.identity_row = row
         form.addRow('私钥文件', row)
+        self.secret_fields = {}
+        for kind, title, hint in [('login', 'SSH 登录密码', '可留空，连接时输入'),
+                                  ('key', '私钥解锁口令', '加密私钥使用；无口令私钥留空'),
+                                  ('sudo', 'sudo 密码', '可留空，执行管理任务时输入')]:
+            edit = QLineEdit()
+            edit.setEchoMode(QLineEdit.EchoMode.Password)
+            edit.setPlaceholderText(hint)
+            edit.textChanged.connect(self.configuration_edited)
+            self.secret_fields[kind] = edit
+            form.addRow(title, edit)
+        self.sudo_uses_login = QCheckBox('sudo 使用 SSH 登录密码')
+        self.sudo_uses_login.toggled.connect(self.configuration_edited)
+        form.addRow('', self.sudo_uses_login)
+        self.remember_secrets = QCheckBox('在本机安全保存凭据')
+        self.remember_secrets.toggled.connect(self.configuration_edited)
+        form.addRow('', self.remember_secrets)
+        self.credential_note = label('未勾选时仅在本次会话使用。勾选后点击「保存配置」；配置导出不包含密码。', 'muted', True)
+        form.addRow('', self.credential_note)
+        self.auth_method.currentIndexChanged.connect(self.configuration_edited)
+        self.auth_method.currentIndexChanged.connect(self.auth_method_changed)
+        for key in ('host', 'username', 'identity_file'):
+            self.fields[key].textChanged.connect(self.connection_identity_edited)
+        self.port.valueChanged.connect(self.connection_identity_edited)
         box.addLayout(form)
         actions = QHBoxLayout()
         actions.addWidget(self.button('检查 SSH 连接', lambda: self.start('connect')))
@@ -583,7 +632,7 @@ class MainWindow(QMainWindow):
         browser.setMarkdown('''# 回溯 RestorePoint
 
 ## 本机 Linux
-1. 在「连接与存储」选择本机模式，设置快照仓库。
+1. 在「连接与配置」选择本机模式，设置快照仓库。
 2. 运行环境检查，再创建备份。需要权限时在弹窗中输入 sudo 密码。
 3. 在「备份版本」刷新并选择版本，可校验或进入恢复。
 
@@ -609,7 +658,7 @@ class MainWindow(QMainWindow):
 - 这是文件级备份，分区表、引导扇区、进程和内存状态需要另行处理。
 - 备份前退出重要应用，暂停数据库或先做应用自身的导出。
 - 同盘本地备份无法应对该磁盘损坏。远程版本为独立完整包，会使用更多存储空间。
-- 密码只供当次任务使用；配置与导出文件不包含密码或私钥内容。
+- 可选在本机系统凭据库保存远程 SSH 密码、私钥口令及 sudo 密码；配置导出与日志不含密码。
 ''')
         layout.addWidget(browser, 1)
 
@@ -624,6 +673,9 @@ class MainWindow(QMainWindow):
         self.select_profile(selected)
 
     def select_profile(self, index):
+        if self.credential_scope is not None:
+            self.session_credentials[self.credential_scope] = self.credential_values()
+        self.loading_profile = True
         present = 0 <= index < len(self.profiles)
         self.settings_scroll.setVisible(present)
         self.settings_empty.setVisible(not present)
@@ -631,26 +683,50 @@ class MainWindow(QMainWindow):
                                              QSizePolicy.Policy.Fixed if present else QSizePolicy.Policy.Expanding)
         self.settings_scroll.parentWidget().layout().invalidate()
         if not present:
+            self.profile_combo.setToolTip('')
             for edit in self.fields.values():
                 edit.clear()
             self.mode.setCurrentIndex(-1)
+            self.credential_scope = None
+            for edit in self.secret_fields.values():
+                edit.clear()
+            self.remember_secrets.setChecked(False)
+            self.sudo_uses_login.setChecked(False)
             self.rows = []
             self.restore_target.clear()
             self.restore_relative.clear()
             self.invalidate_preview()
             self.render_rows()
             self.badge.setText('暂无连接配置')
-            self.hero_description.setText('在「连接与存储」中新增测试机配置，或导入已有配置。')
+            self.hero_description.setText('在「连接与配置」中新增测试机配置，或导入已有配置。')
             self.restore_notice.setText('请先新增或导入一个备份配置。')
             self.saved_label.setText('暂无配置 · 可新增或导入')
+            self.loading_profile = False
             self.set_busy(False)
             return
         profile = self.profiles[index]
+        self.profile_combo.setToolTip(profile.name)
         for key, edit in self.fields.items():
             edit.setText(str(getattr(profile, key)))
         self.mode.setCurrentIndex(0 if profile.mode == 'local' else 1)
         self.port.setValue(profile.port)
         self.reserve.setValue(profile.reserve_gib)
+        self.auth_method.setCurrentIndex(self.auth_method.findData(profile.auth_method))
+        self.remember_secrets.setChecked(profile.remember_secrets)
+        self.sudo_uses_login.setChecked(profile.sudo_uses_login)
+        self.credential_scope = self.credential_store.scope(profile)
+        values = self.session_credentials.get(self.credential_scope)
+        self.credential_note.setText('未勾选时仅在本次会话使用。勾选后点击「保存配置」；配置导出不包含密码。')
+        if values is None:
+            values = {}
+            if profile.remember_secrets:
+                try:
+                    values = self.credential_store.load(profile)
+                    self.credential_note.setText('已从本机系统凭据库读取；取消勾选并保存可删除已存凭据。')
+                except CredentialError as exc:
+                    self.credential_note.setText(str(exc))
+        for kind, edit in self.secret_fields.items():
+            edit.setText(values.get(kind, ''))
         self.rows = []
         if profile.mode == 'remote':
             try:
@@ -662,6 +738,7 @@ class MainWindow(QMainWindow):
         self.saved_label.setText('配置更改后请保存')
         if not self.restore_target.text():
             self.area_changed()
+        self.loading_profile = False
         self.set_busy(False)
 
     def has_profile(self):
@@ -673,7 +750,9 @@ class MainWindow(QMainWindow):
         original = self.profiles[self.profile_combo.currentIndex()]
         data = asdict(original)
         data.update({key: edit.text().strip() for key, edit in self.fields.items()})
-        data.update(mode=self.mode.currentData(), port=self.port.value(), reserve_gib=self.reserve.value())
+        data.update(mode=self.mode.currentData(), port=self.port.value(), reserve_gib=self.reserve.value(),
+                    auth_method=self.auth_method.currentData(), remember_secrets=self.remember_secrets.isChecked(),
+                    sudo_uses_login=self.sudo_uses_login.isChecked())
         return Profile.from_dict(data)
 
     def mode_changed(self, *_):
@@ -694,19 +773,68 @@ class MainWindow(QMainWindow):
         self.update_stats()
 
     def configuration_edited(self, *_):
+        if self.loading_profile:
+            return
         self.invalidate_preview()
         if hasattr(self, 'saved_label'):
             self.saved_label.setText('有未保存的配置更改')
+
+    def credential_values(self):
+        return {kind: edit.text() for kind, edit in self.secret_fields.items() if edit.text()}
+
+    def auth_method_changed(self, *_):
+        method = self.auth_method.currentData()
+        self.identity_row.setEnabled(method != 'password')
+        self.secret_fields['key'].setEnabled(method != 'password')
+        self.secret_fields['login'].setEnabled(method != 'key')
+
+    def connection_identity_edited(self, *_):
+        if self.loading_profile:
+            return
+        # Credentials for one endpoint must not follow an edited host/user/key.
+        for edit in self.secret_fields.values():
+            edit.clear()
+        if self.has_profile():
+            self.credential_scope = self.credential_store.scope(self.current_profile())
+
+    def remember_credential(self, kind, value):
+        profile = self.active_profile
+        scope = self.credential_store.scope(profile)
+        values = self.session_credentials.setdefault(scope, {})
+        values[kind] = value
+        if self.credential_scope == scope:
+            self.loading_profile = True
+            self.secret_fields[kind].setText(value)
+            self.loading_profile = False
+        saved = any(item.id == profile.id and item.remember_secrets and
+                    self.credential_store.scope(item) == scope for item in self.profiles)
+        if profile.remember_secrets and saved:
+            try:
+                self.credential_store.save(profile, values)
+                self.credential_note.setText('凭据已保存在本机系统凭据库。')
+            except CredentialError as exc:
+                self.credential_note.setText(str(exc))
+        elif profile.remember_secrets:
+            self.credential_note.setText('当前凭据仅在本次会话中使用；点击「保存配置」后保存到系统凭据库。')
 
     def save_profile(self):
         try:
             profile = self.current_profile()
             profile.validate()
             index = self.profile_combo.currentIndex()
+            original = self.profiles[index]
+            values = self.credential_values()
+            if profile.remember_secrets and values:
+                self.credential_store.save(profile, values)
+            elif original.remember_secrets and self.credential_store.scope(original) == self.credential_store.scope(profile):
+                self.credential_store.delete(original)
+            if original.remember_secrets and self.credential_store.scope(original) != self.credential_store.scope(profile):
+                self.credential_store.delete(original)
+            self.session_credentials[self.credential_store.scope(profile)] = values
             self.profiles[index] = profile
             self.store.save(self.profiles)
             self.profile_combo.setItemText(index, profile.name)
-            self.saved_label.setText('已保存 · 密码不写入配置')
+            self.saved_label.setText('已保存 · 凭据在系统凭据库中' if profile.remember_secrets and values else '已保存 · 配置文件不含密码')
             self.update_stats()
         except Exception as exc:
             QMessageBox.warning(self, '无法保存配置', str(exc))
@@ -714,13 +842,22 @@ class MainWindow(QMainWindow):
     def add_profile(self):
         self.profiles.append(Profile(name='新测试机'))
         self.reload_profiles(len(self.profiles) - 1)
-        self.navigation.setCurrentRow(3)
+        self.show_page(3)
 
     def delete_profile(self):
         if not self.has_profile() or self.job:
             return
         if QMessageBox.question(self, '删除配置', '删除当前连接配置？备份数据不随配置删除。') == QMessageBox.StandardButton.Yes:
             index = self.profile_combo.currentIndex()
+            profile = self.profiles[index]
+            if profile.remember_secrets:
+                try:
+                    self.credential_store.delete(profile)
+                except CredentialError as exc:
+                    QMessageBox.warning(self, '无法删除凭据', str(exc))
+                    return
+            self.session_credentials.pop(self.credential_store.scope(profile), None)
+            self.credential_scope = None
             del self.profiles[index]
             self.store.save(self.profiles)
             self.reload_profiles(index)
@@ -736,7 +873,7 @@ class MainWindow(QMainWindow):
             profile.validate()
             self.profiles.append(profile)
             self.reload_profiles(len(self.profiles) - 1)
-            self.navigation.setCurrentRow(3)
+            self.show_page(3)
         except Exception as exc:
             QMessageBox.warning(self, '导入失败', str(exc))
 
@@ -777,7 +914,7 @@ class MainWindow(QMainWindow):
             for widget, text in zip(self.stat_values, ('0', '—', '尚无任务')):
                 widget.setText(text)
             self.hero_title.setText('先添加一台测试机')
-            self.next_step.setText('在「连接与存储」中新增或导入配置，再检查连接和备份环境。')
+            self.next_step.setText('在「连接与配置」中新增或导入配置，再检查连接和备份环境。')
             return
         self.stat_values[0].setText(str(len([r for r in self.rows if not r.get('error')])))
         profile = self.current_profile()
@@ -819,7 +956,7 @@ class MainWindow(QMainWindow):
     def go_restore(self):
         if self.selected_id():
             self.restore_version.setCurrentText(self.selected_id())
-            self.navigation.setCurrentRow(2)
+            self.show_page(2)
 
     def fetch_dialog(self):
         name, accepted = QInputDialog.getText(self, '取回备份', '输入测试机上已完成导出的完整版本名：')
@@ -885,7 +1022,10 @@ class MainWindow(QMainWindow):
         self.task_panel.begin(f'{action_title(action, arguments)} · {profile.name}')
         self.append_log(f'{action_title(action, arguments)} · {profile.name}')
         self.set_busy(True)
-        self.job = Job(profile, action, self.store.directory, **arguments)
+        values = self.credential_values() if profile.mode == 'remote' else {}
+        self.session_credentials[self.credential_store.scope(profile)] = dict(values)
+        self.job = Job(profile, action, self.store.directory, credentials=values, **arguments)
+        self.job.credential_accepted.connect(self.remember_credential)
         self.job.message.connect(self.append_log)
         self.job.update.connect(self.progress_changed)
         self.job.question.connect(self.answer_question)

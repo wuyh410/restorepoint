@@ -50,7 +50,7 @@ py -3 -m venv .venv
 Linux 备份引擎还需要 rsync、GNU tar、gzip、sudo、findmnt、dpkg-query 和 apt-mark。
 已打包程序自带 Python 和 Qt 运行库，系统备份工具仍需安装在 Linux 来源机器上。
 
-首次使用时，在「连接与存储」选择模式、设置路径并保存配置。远程模式先检查 SSH
+首次使用时，在「连接与配置」选择模式、设置路径并保存配置。远程模式先检查 SSH
 连接、核对主机指纹并部署组件，再执行环境检查和创建备份。界面内提供完整操作帮助。
 
 ## 使用说明
@@ -61,7 +61,9 @@ Linux 备份引擎还需要 rsync、GNU tar、gzip、sudo、findmnt、dpkg-query
 - [连接配置模板](remote.config.example.json)
 - [恢复界面截图](screenshots/restore.png)
 
-SSH / sudo 密码仅供当前任务使用，不写入配置或日志。配置导出仅包含参数和私钥文件
+SSH 支持自动、密码和私钥文件认证。可选在本机系统凭据库保存登录密码、私钥口令及 sudo 密码；
+Windows 使用凭据管理器，Linux 使用 Secret Service。未勾选保存时，仅在当前客户端会话中使用。
+密码不写入配置、历史或日志。配置导出仅包含参数和私钥文件
 路径，不包含私钥内容。Linux 系统仓库受 root 权限保护，备份包也应妥善限制访问。
 
 ## 打包
@@ -88,14 +90,14 @@ Linux 二进制与构建系统的 glibc 和 CPU 架构有关，需要兼容旧�
 ## 验证
 
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py
 ```
 
 Windows 运行桌面层测试：
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
-.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py test_ui_updates.py
+.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py
 ```
 
 Linux 开发环境已完成隔离测试、Qt 离屏渲染与构建程序启动检查。

@@ -1,7 +1,7 @@
 """Value controls that never change a setting in response to the mouse wheel."""
 from PySide6.QtCore import QPoint, QPointF, QSize
 from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QSpinBox, QStyledItemDelegate
+from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QSpinBox, QStyledItemDelegate, QStyle, QStyleOptionComboBox, QStylePainter
 
 
 def scroll_parent(widget, event):
@@ -48,3 +48,34 @@ class ValueComboBox(QComboBox):
         top = below.y() if below.y() + height <= available.bottom() + 1 else max(available.top(), above)
         left = max(available.left(), min(below.x(), available.right() - width + 1))
         popup.setGeometry(left, top, width, height)
+
+
+class ProfileComboBox(ValueComboBox):
+    """Keep the actual name intact; elide only the closed selector's label."""
+    def __init__(self):
+        super().__init__()
+        self.currentTextChanged.connect(self.setToolTip)
+
+    def display_text(self, width):
+        text = self.currentText()
+        metrics = self.fontMetrics()
+        if metrics.horizontalAdvance(text) <= width:
+            return text
+        left, right = 0, len(text)
+        while left < right:
+            middle = (left + right + 1) // 2
+            if metrics.horizontalAdvance(text[:middle] + '...') <= width:
+                left = middle
+            else:
+                right = middle - 1
+        return text[:left] + '...'
+
+    def paintEvent(self, event):
+        option = QStyleOptionComboBox()
+        self.initStyleOption(option)
+        rect = self.style().subControlRect(QStyle.ComplexControl.CC_ComboBox, option,
+                                           QStyle.SubControl.SC_ComboBoxEditField, self)
+        option.currentText = self.display_text(max(0, rect.width() - 2))
+        painter = QStylePainter(self)
+        painter.drawComplexControl(QStyle.ComplexControl.CC_ComboBox, option)
+        painter.drawControl(QStyle.ControlElement.CE_ComboBoxLabel, option)

@@ -19,6 +19,9 @@ class Profile:
     port: int = 22
     username: str = ''
     identity_file: str = ''
+    auth_method: str = 'auto'
+    remember_secrets: bool = False
+    sudo_uses_login: bool = False
     remote_helper: str = '/usr/local/lib/test-backup/portable.py'
     export_root: str = '/var/backups/portable-snapshots'
     inbox: str = ''
@@ -40,6 +43,8 @@ class Profile:
             raise ValueError('请输入配置名称。')
         if self.mode not in ('local', 'remote'):
             raise ValueError('无效的备份模式。')
+        if self.auth_method not in ('auto', 'password', 'key'):
+            raise ValueError('无效的 SSH 认证方式。')
         if not 1 <= int(self.port) <= 65535 or not 8 <= int(self.reserve_gib) <= 65536:
             raise ValueError('端口或预留空间无效，至少预留 8 GiB。')
         if self.mode == 'local' and not self.repository.startswith('/'):
@@ -47,6 +52,8 @@ class Profile:
         if not self.storage.strip():
             raise ValueError('请选择备份包保存目录。')
         if remote:
+            if self.auth_method == 'key' and not self.identity_file.strip():
+                raise ValueError('密钥认证需要选择私钥文件。')
             if not self.host.strip() or any(c.isspace() for c in self.host):
                 raise ValueError('请输入主机地址或 SSH 配置别名。')
             for value in (self.remote_helper, self.export_root, self.staging, self.inbox):

@@ -8,10 +8,12 @@ GUI 通过后台任务调用 Linux 引擎，远程连接使用内置的 Paramiko
 
 ## 界面功能
 
+- 左栏按「概览 → 1 连接与配置 → 2 备份版本 → 3 恢复数据 → 使用帮助」排列；概览提供步骤入口。
+- 配置选择框为名称保留更多宽度，过长时以 `...` 结尾；悬停可查看完整名称。
 - 概览：实际版本数、目标磁盘可用空间、最近任务状态，环境检查与创建备份。
 - 备份版本：仓库扫描、搜索、详情、SHA-256 校验、取回已有远端导出版本。
 - 恢复：用户 / 系统范围选择，远程上传、解包、预览，预览成功后执行恢复。
-- 连接与存储：多机器配置、SSH 密钥或密码认证、首次主机指纹确认、组件部署、
+- 连接与配置：多机器配置、SSH 密钥或密码认证、首次主机指纹确认、组件部署、
   配置导入导出，并可导入原 `remote.config.json`。
 - 底部任务面板：当前日志、任务名称、阶段、传输进度与中断操作跨页面共用，支持展开、收起和调整高度；历史任务单独查看及导出。
 - 使用帮助：在界面内说明两种模式的操作顺序、系统恢复条件和当前支持范围。
@@ -33,7 +35,7 @@ sudo、findmnt、dpkg-query、apt-mark；因此当前面向 Debian/Ubuntu 来源
 
 ## 首次使用
 
-1. 在「连接与存储」选择模式并填写仓库 / 备份包目录，保存配置。
+1. 在「连接与配置」选择模式并填写仓库 / 备份包目录，保存配置。
 2. 远程模式填写 SSH 主机或 `~/.ssh/config` 中的别名。用户名与私钥可留空沿用 SSH
    配置；端口默认 22。GUI 支持密钥、SSH agent 和密码，ProxyJump 暂需改用 ProxyCommand。
 3. 检查 SSH 连接，核对首次主机指纹，然后点击「部署 / 更新测试机组件」。
@@ -42,12 +44,22 @@ sudo、findmnt、dpkg-query、apt-mark；因此当前面向 Debian/Ubuntu 来源
 4. 环境检查后创建备份。Linux 本地保存硬链接快照；远程保存独立完整包到开发机。
 5. 从「备份版本」选中版本，查看详情或进入恢复。
 
-密码在 GUI 弹窗内输入，经本地管道或关闭回显的 SSH 会话交给 sudo；密码不写入配置、
-任务历史或日志。主机密钥会与 OpenSSH known_hosts 和应用自己的 known_hosts 核对，
+认证方式可选择自动、密码或私钥文件。私钥应选择私钥文件而非 `.pub` 公钥，
+对应公钥需预先加入测试机的 `authorized_keys`。SSH 密码、私钥口令与 sudo 密码独立设置，
+也可选择 sudo 使用 SSH 登录密码。
+
+勾选「在本机安全保存凭据」并保存配置后，Windows 使用凭据管理器，Linux 使用已启用、
+解锁的 Secret Service。应用仅使用这两个系统后端，不回退到明文文件；服务不可用时会提示，
+仍可取消保存并为当前会话输入。取消勾选并保存，或删除配置，会移除该配置保存的凭据。
+已保存或本次输入的凭据会在任务中使用，认证失败时重新询问；主机、用户、端口或私钥路径
+改变时会清空输入，避免带到另一台机器。实现使用 [Python keyring 系统后端](https://keyring.readthedocs.io/en/latest/)。
+
+sudo 密码经本地管道或关闭回显的 SSH 会话传递；密码不写入配置、任务历史或日志。
+主机密钥会与 OpenSSH known_hosts 和应用自己的 known_hosts 核对，
 已有主机密钥改变时拒绝连接。应用不自动修改 sudoers，不要求开放 SSH root 登录。
 
 Linux 仓库通常只允许 root 读取，刷新本地版本时也可能需要 sudo 认证。
-原生 GUI 每个权限任务使用独立认证会话，密码不会跨任务保存。
+本机 Linux 权限任务仍单独询问 sudo 密码；安全保存功能用于远程测试机认证。
 sudo 提示中的密码反馈、退格和 ANSI 控制序列会从展示、保存和导出的任务日志中清理。
 数字输入框和下拉框通过点击、键盘调整；滚轮用于滚动所在页面，不会修改字段值。
 
@@ -133,7 +145,7 @@ RestorePoint --runtime-info runtime.json
 源码回归测试：
 
 ```bash
-python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py
+python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py
 ```
 
 GUI 测试使用 offscreen 平台和临时配置目录，不连接真实机器，不执行真实系统备份。

@@ -172,12 +172,15 @@ class DesktopBackendTest(unittest.TestCase):
 
 
 @contextlib.contextmanager
-def password_only_ssh():
+def password_only_ssh(accepted_key=None):
     """An isolated loopback SSH server; it cannot execute commands or use real accounts."""
     import paramiko
     class PasswordOnly(paramiko.ServerInterface):
         def get_allowed_auths(self, username):
-            return 'password'
+            return 'publickey' if accepted_key else 'password'
+
+        def check_auth_publickey(self, username, key):
+            return paramiko.AUTH_SUCCESSFUL if accepted_key and username == 'fixture' and key == accepted_key else paramiko.AUTH_FAILED
 
         def check_auth_password(self, username, password):
             return paramiko.AUTH_SUCCESSFUL if (username, password) == ('fixture', 'temporary-password') else paramiko.AUTH_FAILED
@@ -318,7 +321,7 @@ class DesktopUiTest(unittest.TestCase):
             with mock.patch.object(Job, 'start') as start:
                 window = MainWindow(temp)
                 window.show()
-                window.navigation.setCurrentRow(3)
+                window.show_page(3)
                 self.app.processEvents()
                 with mock.patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.No):
                     window.delete_profile()
@@ -347,7 +350,7 @@ class DesktopUiTest(unittest.TestCase):
                 window = MainWindow(temp)
                 self.assertEqual(window.profiles, [])
                 for page in range(5):
-                    window.navigation.setCurrentRow(page)
+                    window.show_page(page)
                     self.app.processEvents()
                 window.add_profile()
                 self.app.processEvents()
@@ -397,7 +400,7 @@ class DesktopUiTest(unittest.TestCase):
             SettingsStore(temp).save([Profile(name='First profile'), Profile(name='Second profile')])
             window = MainWindow(temp)
             window.show()
-            window.navigation.setCurrentRow(3)
+            window.show_page(3)
             self.app.processEvents()
             combo = window.profile_combo
             self.assertEqual(combo.currentText(), 'First profile')
@@ -460,7 +463,7 @@ class DesktopUiTest(unittest.TestCase):
                 self.assertEqual(window.table.rowCount(), 1)
                 self.assertFalse(window.apply_button.isEnabled())
                 for page in range(5):
-                    window.navigation.setCurrentRow(page)
+                    window.show_page(page)
                     self.app.processEvents()
                     self.assertEqual(window.pages.currentIndex(), page)
                 window.fields['name'].setText('更新后的配置')
