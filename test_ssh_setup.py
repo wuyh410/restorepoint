@@ -68,7 +68,7 @@ def setup_server(home, reject_keys=False):
         def check_auth_publickey(self, username, key):
             public_keys.append(key.get_base64())
             path = home / '.ssh/authorized_keys'
-            present = path.exists() and (key.get_name() + ' ' + key.get_base64()) in path.read_text()
+            present = path.exists() and (key.get_name() + ' ' + key.get_base64()) in path.read_text(encoding='utf-8')
             return paramiko.AUTH_SUCCESSFUL if username == 'fixture' and present and not reject_keys else paramiko.AUTH_FAILED
 
         def check_channel_request(self, kind, channel_id):
@@ -158,9 +158,9 @@ class LocalKeyTest(unittest.TestCase):
                 self.assertEqual(repeated.fingerprint, local.fingerprint)
                 self.assertEqual(local.path.read_bytes(), before)
                 if sys.platform == 'win32':
-                    from desktop.windows_security import current_sid, read_acl
+                    from desktop.windows_security import current_sid, read_dacl
                     for path in (local.path, local.path.parent):
-                        acl = read_acl(path)
+                        acl = read_dacl(path)
                         self.assertIn(current_sid(), acl)
                         self.assertIn('D:P', acl)
                         self.assertNotIn(';;;WD)', acl)
@@ -180,7 +180,7 @@ class LocalKeyTest(unittest.TestCase):
             path.symlink_to(target)
             with self.assertRaises(ValueError):
                 ssh_keys.prepare_key(temp, profile, SetupContext())
-            self.assertEqual(target.read_text(), 'existing data')
+            self.assertEqual(target.read_text(encoding='utf-8'), 'existing data')
 
 
 @unittest.skipUnless(sys.platform == 'linux', 'Linux remote public-key installer')
@@ -217,7 +217,7 @@ class InstallerTest(unittest.TestCase):
             public = ssh_keys.prepare_key(root / 'local', Profile(), SetupContext()).public
             result = run_installer(home, public)
             self.assertNotEqual(result.returncode, 0)
-            self.assertEqual(target.read_text(), 'must not change')
+            self.assertEqual(target.read_text(encoding='utf-8'), 'must not change')
 
     def test_real_ssh_setup_verifies_the_key_and_can_be_repeated(self):
         for encrypted in (False, True):
@@ -312,8 +312,8 @@ class KeySetupUiTest(unittest.TestCase):
                     self.assertEqual(saved.identity_file, result.identity_file)
                     self.assertEqual(saved.remember_secrets, remember)
                     self.assertEqual(bool(vault.values), remember)
-                    self.assertNotIn('fixture-key-passphrase', (Path(temp) / 'profiles.json').read_text())
-                    self.assertNotIn('fixture-login', (Path(temp) / 'profiles.json').read_text())
+                    self.assertNotIn('fixture-key-passphrase', (Path(temp) / 'profiles.json').read_text(encoding='utf-8'))
+                    self.assertNotIn('fixture-login', (Path(temp) / 'profiles.json').read_text(encoding='utf-8'))
                 finally:
                     window.close()
 
@@ -338,7 +338,7 @@ class KeySetupUiTest(unittest.TestCase):
                     job = window.job
                     self.assertTrue(job.wait(3000))
                     self.app.processEvents()
-                self.assertNotIn('fixture-setup-secret', window.history_path.read_text())
+                self.assertNotIn('fixture-setup-secret', window.history_path.read_text(encoding='utf-8'))
                 self.assertNotIn('fixture-setup-secret', window.console.toPlainText())
                 self.assertFalse(window.remember_secrets.isChecked())
                 target = os.environ.get('RESTOREPOINT_UI_ARTIFACT_DIR')
