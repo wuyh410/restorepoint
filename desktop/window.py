@@ -1,5 +1,5 @@
 import argparse
-from dataclasses import asdict
+from dataclasses import asdict, replace
 import datetime as dt
 import json
 import os
@@ -22,16 +22,21 @@ from .backend import resource_root
 from .jobs import Job
 from .models import Profile, SettingsStore, import_legacy, validate_id
 from .credentials import CredentialStore, CredentialError
+from .key_dialog import KeySetupDialog
+from .backup_dialog import BackupDialog
+from . import scopes
 from .task_panel import TaskPanel
 from .terminal import clean_log_text
-from .widgets import ComboItemDelegate, ProfileComboBox, ValueComboBox, ValueSpinBox
+from .widgets import ComboItemDelegate, ProfileComboBox, TaskSplitter, ValueComboBox, ValueSpinBox
 
 ACTIONS = {'connect': '检查连接', 'install': '部署组件', 'plan': '环境检查', 'backup': '创建备份',
            'catalog': '刷新版本', 'verify': '完整性校验', 'fetch': '取回备份', 'upload': '上传备份',
-           'unpack': '解包备份', 'restore': '恢复预览', 'remove_export': '清理导出包'}
+           'unpack': '解包备份', 'restore': '恢复预览', 'remove_export': '清理导出包', 'setup_key': '设置 SSH 密钥'}
 
 
 def action_title(action, arguments=None):
+    if action == 'restore' and (arguments or {}).get('area') == 'packages':
+        return '按清单安装软件' if arguments.get('apply') else '软件安装预览'
     if action == 'restore' and (arguments or {}).get('apply'):
         return '执行恢复'
     return ACTIONS[action]
@@ -100,6 +105,7 @@ QLabel#taskOutcome[taskState="失败"] { color: #ad4644; background: #fff0ee; }
 QLabel#taskOutcome[taskState="已取消"] { color: #65758d; background: #edf0f5; }
 QPlainTextEdit#taskConsole { font-family: 'Cascadia Mono', 'Consolas', 'DejaVu Sans Mono', monospace; font-size: 12px; padding: 7px; border-radius: 5px; }
 QSplitter::handle:vertical { background: #e2e7ef; height: 5px; margin: 1px 0; }
+QSplitter#taskSplitter::handle:vertical { background: transparent; height: 10px; margin: 0; }
 QScrollArea { border: 0; background: transparent; }
 QStatusBar { background: #eef2f7; color: #63758e; border-top: 1px solid #e0e6ee; }
 QToolTip { background: #14263e; color: white; border: 0; padding: 6px; }
@@ -239,9 +245,10 @@ class MainWindow(QMainWindow):
         body.addLayout(heading)
         self.pages = QStackedWidget()
         self.pages.setMinimumHeight(280)
-        self.task_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.task_splitter = TaskSplitter(Qt.Orientation.Vertical)
+        self.task_splitter.setObjectName('taskSplitter')
         self.task_splitter.setChildrenCollapsible(False)
-        self.task_splitter.setHandleWidth(6)
+        self.task_splitter.setHandleWidth(10)
         self.task_splitter.addWidget(self.pages)
         body.addWidget(self.task_splitter, 1)
         outer.addWidget(content, 1)
@@ -342,7 +349,7 @@ class MainWindow(QMainWindow):
         self.hero_description = label('', '', True)
         hero_box.addWidget(self.hero_description)
         actions = QHBoxLayout()
-        actions.addWidget(self.button('创建备份', lambda: self.start('backup'), True))
+        actions.addWidget(self.button('创建备份', self.create_backup, True))
         actions.addWidget(self.button('环境检查', lambda: self.start('plan')))
         actions.addStretch()
         hero_box.addLayout(actions)
@@ -369,6 +376,7 @@ class MainWindow(QMainWindow):
     def build_versions(self):
         layout = self.page('备份版本', '选择一个已完成的版本，检查完整性或进入恢复。未完成的下载不会列为恢复点。')
         toolbar = QHBoxLayout()
+        toolbar.addWidget(self.button('创建备份', self.create_backup, True))
         self.search = QLineEdit()
         self.search.setPlaceholderText('搜索版本、主机或时间…')
         self.search.textChanged.connect(self.render_rows)
@@ -389,7 +397,7 @@ class MainWindow(QMainWindow):
             self.table.horizontalHeader().setSectionResizeMode(column, QHeaderView.ResizeMode.ResizeToContents)
         self.table.cellDoubleClicked.connect(lambda *_: self.show_details())
         layout.addWidget(self.table, 1)
-        self.empty_label = label('还没有读取到完整备份。配置仓库后点击「刷新版本」。', 'muted')
+        self.empty_label = label('还没有读取到已完成的备份。配置仓库后点击「刷新版本」。', 'muted')
         layout.addWidget(self.empty_label)
         buttons = QHBoxLayout()
         buttons.addWidget(self.button('校验选中版本', lambda: self.start('verify', snapshot=self.selected_id())))
@@ -421,6 +429,7 @@ class MainWindow(QMainWindow):
         self.restore_version.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         self.restore_version.setPlaceholderText('选择或输入完整版本名')
         self.restore_version.currentTextChanged.connect(self.invalidate_preview)
+        self.restore_version.currentTextChanged.connect(self.update_restore_areas)
         form.addRow('备份版本', self.restore_version)
         self.restore_area = combo_box()
         self.restore_area.addItem('用户目录 / 文件', 'home')
@@ -434,7 +443,8 @@ class MainWindow(QMainWindow):
         self.restore_relative = QLineEdit()
         self.restore_relative.setPlaceholderText('例如 wyh/文档；留空恢复整个用户目录范围')
         self.restore_relative.textChanged.connect(self.invalidate_preview)
-        form.addRow('选定用户路径', self.restore_relative)
+        self.relative_label = label('选定用户路径')
+        form.addRow(self.relative_label, self.restore_relative)
         box.addLayout(form)
         self.remote_steps = QWidget()
         step_box = QHBoxLayout(self.remote_steps)
@@ -568,6 +578,8 @@ class MainWindow(QMainWindow):
         box.addLayout(form)
         actions = QHBoxLayout()
         actions.addWidget(self.button('检查 SSH 连接', lambda: self.start('connect')))
+        self.setup_key_button = self.button('一键设置 SSH 密钥', self.setup_ssh_key)
+        actions.addWidget(self.setup_key_button)
         actions.addWidget(self.button('部署 / 更新测试机组件', lambda: self.start('install')))
         actions.addStretch()
         box.addLayout(actions)
@@ -766,7 +778,7 @@ class MainWindow(QMainWindow):
         self.remote_steps.setVisible(remote)
         self.fetch_button.setVisible(remote)
         self.cleanup_button.setVisible(remote)
-        self.badge.setText('SSH 远程 · 完整备份包' if remote else 'Linux 本地 · 版本快照')
+        self.badge.setText('SSH 远程 · 按范围备份' if remote else 'Linux 本地 · 版本快照')
         self.hero_description.setText('测试机保留 Linux 元数据，备份包传回当前电脑并完成校验。Linux 与 Windows 使用相同的操作界面。' if remote else '在本机保留系统与用户数据的历史版本。未变化的文件共享空间，适合升级或修改配置前创建恢复点。')
         self.restore_notice.setText('远程模式：上传 → 解包 → 预览 → 恢复。当前配置的测试机路径应与运行环境一致。' if remote else '本机模式直接读取快照。系统恢复需要从救援环境启动，挂载目标分区后再执行。')
         self.invalidate_preview()
@@ -831,13 +843,32 @@ class MainWindow(QMainWindow):
             if original.remember_secrets and self.credential_store.scope(original) != self.credential_store.scope(profile):
                 self.credential_store.delete(original)
             self.session_credentials[self.credential_store.scope(profile)] = values
-            self.profiles[index] = profile
-            self.store.save(self.profiles)
+            updated = list(self.profiles)
+            updated[index] = profile
+            self.store.save(updated)
+            self.profiles = updated
             self.profile_combo.setItemText(index, profile.name)
             self.saved_label.setText('已保存 · 凭据在系统凭据库中' if profile.remember_secrets and values else '已保存 · 配置文件不含密码')
             self.update_stats()
+            return True
         except Exception as exc:
             QMessageBox.warning(self, '无法保存配置', str(exc))
+            return False
+
+    def setup_ssh_key(self):
+        try:
+            profile = self.current_profile()
+            if profile.mode != 'remote':
+                raise ValueError('SSH 密钥设置用于远程 Linux 测试机。')
+            replace(profile, auth_method='auto').validate(remote=True)
+        except ValueError as exc:
+            QMessageBox.information(self, '检查连接配置', str(exc))
+            return
+        dialog = KeySetupDialog(profile, self.store.directory, self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            secret = dialog.passphrase.text()
+            self.start('setup_key', transient_credentials={'setup_key': secret},
+                       encrypt=bool(secret), remember=dialog.remember.isChecked())
 
     def add_profile(self):
         self.profiles.append(Profile(name='新测试机'))
@@ -905,7 +936,37 @@ class MainWindow(QMainWindow):
         if current in [r['id'] for r in self.rows]:
             self.restore_version.setCurrentText(current)
         self.restore_version.blockSignals(False)
+        self.update_restore_areas()
         self.update_stats()
+
+    def create_backup(self):
+        if not self.has_profile() or self.job:
+            return
+        dialog = BackupDialog(self.current_profile(), self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            areas, mode = list(dialog.selected()), dialog.mode()
+            profile = self.profiles[self.profile_combo.currentIndex()]
+            profile.backup_areas, profile.software_mode = areas, mode
+            self.start('plan' if dialog.plan_only else 'backup', areas=areas, software_mode=mode)
+
+    def update_restore_areas(self, *_):
+        if not hasattr(self, 'restore_area') or not hasattr(self, 'restore_relative'):
+            return
+        selected = self.restore_area.currentData()
+        row = next((item for item in self.rows if item['id'] == self.restore_version.currentText() and not item.get('error')), None)
+        choices = scopes.restorable(row['metadata']) if row else [('用户目录 / 文件', 'home'), ('系统与已安装软件', 'system')]
+        old = [(self.restore_area.itemText(i), self.restore_area.itemData(i)) for i in range(self.restore_area.count())]
+        if old == choices:
+            return
+        self.restore_area.blockSignals(True)
+        self.restore_area.clear()
+        for title, area in choices:
+            self.restore_area.addItem(title, area)
+        index = self.restore_area.findData(selected)
+        self.restore_area.setCurrentIndex(max(0, index))
+        self.restore_area.blockSignals(False)
+        if self.restore_area.currentData() != selected:
+            self.area_changed()
 
     def update_stats(self):
         if not hasattr(self, 'fields'):
@@ -964,9 +1025,14 @@ class MainWindow(QMainWindow):
             self.start('fetch', snapshot=name.strip())
 
     def area_changed(self, *_):
-        system = self.restore_area.currentData() == 'system'
-        self.restore_target.setText('/mnt/target' if system else '/home')
-        self.restore_relative.setEnabled(not system)
+        area = self.restore_area.currentData()
+        self.restore_target.setText({'system': '/mnt/target', 'config': '/etc', 'software': '/mnt/software-restore', 'packages': '/'}.get(area, '/home'))
+        self.restore_target.setEnabled(area != 'packages' and self.job is None and self.has_profile())
+        self.restore_relative.setEnabled(area in ('home', 'config', 'software') and self.job is None and self.has_profile())
+        self.relative_label.setText('选定用户路径' if area == 'home' else '选定文件路径')
+        self.restore_relative.setPlaceholderText('例如 wyh/文档；留空恢复整个用户目录范围' if area == 'home' else '相对备份范围的路径；留空恢复整个范围')
+        if hasattr(self, 'apply_button'):
+            self.apply_button.setText('按清单安装软件' if area == 'packages' else '执行恢复')
         self.invalidate_preview()
 
     def signature(self):
@@ -981,13 +1047,14 @@ class MainWindow(QMainWindow):
 
     def restore_action(self, action, apply=False):
         self.start(action, snapshot=self.restore_version.currentText().strip(), area=self.restore_area.currentData(),
-                   target=self.restore_target.text().strip(), relative=self.restore_relative.text().strip() if self.restore_area.currentData() == 'home' else '', apply=apply)
+                   target=self.restore_target.text().strip(), relative=self.restore_relative.text().strip() if self.restore_area.currentData() in ('home', 'config', 'software') else '', apply=apply)
 
     def apply_restore(self):
         if self.preview_signature is None or self.preview_signature != self.signature():
             self.invalidate_preview()
             return
-        detail = '将覆盖目标中选定范围内的同名文件。' if self.restore_area.currentData() == 'home' else '将还原系统文件，并清理备份之后新增的系统文件。'
+        area = self.restore_area.currentData()
+        detail = '将按精确版本安装 apt 软件，可能升级、降级或重启相关服务；禁止移除已有软件。不会自动回写备份中的配置与应用数据。' if area == 'packages' else '将还原系统文件，并清理备份之后新增的系统文件。' if area == 'system' else '将覆盖目标中选定范围内的同名文件，保留额外文件。'
         if QMessageBox.warning(self, '执行恢复', f'版本：{self.restore_version.currentText()}\n目标：{self.restore_target.text()}\n\n{detail}\n请确认已查看恢复预览。', QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Yes:
             self.restore_action('restore', True)
 
@@ -996,12 +1063,13 @@ class MainWindow(QMainWindow):
         if name and QMessageBox.question(self, '清理测试机导出包', '将先校验当前电脑的副本，再删除测试机上此版本的暂存导出包：\n' + name) == QMessageBox.StandardButton.Yes:
             self.start('remove_export', snapshot=name)
 
-    def start(self, action, **arguments):
+    def start(self, action, transient_credentials=None, **arguments):
         if self.job:
             return
         try:
             profile = self.current_profile()
-            profile.validate(remote=profile.mode == 'remote' and action not in ('catalog', 'verify'))
+            checked = replace(profile, auth_method='auto') if action == 'setup_key' else profile
+            checked.validate(remote=profile.mode == 'remote' and action not in ('catalog', 'verify'))
             if profile.mode == 'local' and sys.platform != 'linux':
                 raise ValueError('本机系统快照需要 Linux。请在 Windows 上选择远程 Linux 模式。')
             if action in ('verify', 'fetch', 'upload', 'unpack', 'restore', 'remove_export'):
@@ -1024,6 +1092,7 @@ class MainWindow(QMainWindow):
         self.set_busy(True)
         values = self.credential_values() if profile.mode == 'remote' else {}
         self.session_credentials[self.credential_store.scope(profile)] = dict(values)
+        values.update(transient_credentials or {})
         self.job = Job(profile, action, self.store.directory, credentials=values, **arguments)
         self.job.credential_accepted.connect(self.remember_credential)
         self.job.message.connect(self.append_log)
@@ -1043,6 +1112,11 @@ class MainWindow(QMainWindow):
         self.settings_content.setEnabled(not busy and present)
         for widget in (self.restore_version, self.restore_area, self.restore_target, self.restore_relative):
             widget.setEnabled(not busy and present)
+        if self.restore_area.currentData() == 'packages':
+            self.restore_target.setEnabled(False)
+            self.restore_relative.setEnabled(False)
+        elif self.restore_area.currentData() == 'system':
+            self.restore_relative.setEnabled(False)
         self.cancel_button.setEnabled(busy)
         self.apply_button.setEnabled(not busy and present and self.preview_signature is not None and self.preview_signature == self.signature())
         if busy:
@@ -1069,6 +1143,11 @@ class MainWindow(QMainWindow):
         request.event.set()
 
     def operation_success(self, result):
+        if self.active_action == 'setup_key' and not self.apply_key_setup(result):
+            self.outcome = '失败'
+            self.append_log('密钥登录已验证，但连接配置未保存。密钥文件已保留，可重新保存配置。')
+            self.task_panel.set_expanded(True)
+            return
         self.outcome = '已完成'
         self.append_log('任务已完成。')
         if self.active_action == 'catalog':
@@ -1082,11 +1161,31 @@ class MainWindow(QMainWindow):
             self.render_rows()
         elif self.active_action == 'restore' and not self.active_arguments.get('apply'):
             self.preview_signature = self.signature()
-            self.text_dialog('恢复预览 · 尚未写入目标', str(result))
+            self.text_dialog('软件安装预览 · 尚未安装' if self.active_arguments.get('area') == 'packages' else '恢复预览 · 尚未写入目标', str(result))
         elif self.active_action == 'restore':
             self.invalidate_preview()
         elif self.active_action == 'connect':
             self.text_dialog('环境与连接结果', json.dumps(result, ensure_ascii=False, indent=2))
+
+    def apply_key_setup(self, result):
+        old_scope = self.credential_store.scope(self.active_profile)
+        values = dict(self.session_credentials.get(old_scope, {}))
+        values.update(result.credentials)
+        self.loading_profile = True
+        try:
+            self.fields['identity_file'].setText(result.identity_file)
+            self.auth_method.setCurrentIndex(self.auth_method.findData('key'))
+            self.remember_secrets.setChecked(self.active_arguments.get('remember', False))
+            for kind, edit in self.secret_fields.items():
+                edit.setText(values.get(kind, ''))
+        finally:
+            self.loading_profile = False
+        self.credential_scope = self.credential_store.scope(self.current_profile())
+        if not self.save_profile():
+            return False
+        self.append_log('密钥登录验证通过，已自动保存连接配置。')
+        self.credential_note.setText('密码和口令仅在当前客户端会话中使用，未保存记录。' if not self.remember_secrets.isChecked() else '密码和口令已按你的选择保存到本机系统凭据库。')
+        return True
 
     def operation_failed(self, error):
         self.outcome = '失败'

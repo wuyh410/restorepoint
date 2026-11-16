@@ -1,9 +1,10 @@
-from dataclasses import asdict, dataclass, fields
+from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 import json
 import os
 import re
 import uuid
+from .scopes import normalize
 
 ID_PATTERN = r'\d{8}T\d{6}\.\d{6}Z-[0-9a-f]{8}'
 
@@ -22,6 +23,8 @@ class Profile:
     auth_method: str = 'auto'
     remember_secrets: bool = False
     sudo_uses_login: bool = False
+    backup_areas: list = field(default_factory=lambda: ['system', 'home'])
+    software_mode: str = 'reinstall'
     remote_helper: str = '/usr/local/lib/test-backup/portable.py'
     export_root: str = '/var/backups/portable-snapshots'
     inbox: str = ''
@@ -39,6 +42,9 @@ class Profile:
         return cls(**{f.name: data[f.name] for f in fields(cls) if f.name in data})
 
     def validate(self, remote=False):
+        normalize(self.backup_areas)
+        if self.software_mode not in ('files', 'reinstall'):
+            raise ValueError('无效的软件备份方式。')
         if not self.name.strip():
             raise ValueError('请输入配置名称。')
         if self.mode not in ('local', 'remote'):

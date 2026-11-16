@@ -11,12 +11,24 @@ Windows 或 Linux 客户端通过 SSH 管理 Linux 测试机的备份与恢复�
 - 远程备份：保留 Linux 元数据的完整备份包，通过 SSH/SFTP 保存到客户端。
 - 系统与用户目录分别保存，包含配置、软件文件、软件数据库和用户隐藏配置。
 - 版本列表、搜索、详情与 SHA-256 校验。
+- 创建时可选择系统、软件、用户、完整备份或仅系统配置；只复制所选范围。
+- 软件提供清单重装与程序文件打包两种方式；apt 清单重装先预览、再显式安装。
 - 用户文件恢复和系统恢复预览；预览后显式执行恢复。
 - 多机器配置、SSH 密钥 / 密码认证、主机指纹核对和远程组件部署。
+- 一键设置 SSH 密钥：生成专用 Ed25519 密钥、追加公钥、验证登录后自动配置；密码和口令是否保存由用户选择。
 - 跨页面共用的底部任务面板，将当前日志、任务状态、实际传输进度与取消操作放在一起；支持查看历史和导出日志。
 - 原本的 Python / PowerShell 命令行入口继续保留。
 
 ## 支持范围
+
+系统与软件共用部分 Linux 文件。系统备份保留整体回滚必需的共享组件，完整备份不重复
+打包这些文件。软件可以独立备份：清单方式保留版本清单及 `/etc`、`/var/lib`、`/var/opt`
+等常见配置与数据；文件方式同时保留 `/usr`、`/opt` 及库目录。自定义位置的数据需另行覆盖。
+按清单自动安装目前支持 Debian / Ubuntu 的 apt，要求系统版本与 CPU 架构一致、安装源仍提供
+对应版本；Snap / Flatpak 保存附加清单，自动重装暂不覆盖。软件配置与数据可另行复制到独立目录检查。
+
+升级到本版后，远程按类型备份和软件恢复前，请先在配置页点击「部署 / 更新测试机组件」。
+原有完整备份仍可读取和恢复；按类型创建的新包使用扩展清单格式，需使用新版客户端和测试机组件。
 
 | 客户端 | Linux 本地快照 | 管理远程 Linux | 保存远程备份包 |
 | --- | --- | --- | --- |
@@ -90,14 +102,14 @@ Linux 二进制与构建系统的 glibc 和 CPU 架构有关，需要兼容旧�
 ## 验证
 
 ```bash
-QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m unittest -v test_snapshot.py test_portable.py test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py test_ssh_setup.py test_backup_scopes.py
 ```
 
 Windows 运行桌面层测试：
 
 ```powershell
 $env:QT_QPA_PLATFORM = 'offscreen'
-.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py
+.venv/Scripts/python.exe -m unittest -v test_desktop.py test_deployment.py test_ui_updates.py test_credentials.py test_ssh_setup.py test_backup_scopes.py
 ```
 
 Linux 开发环境已完成隔离测试、Qt 离屏渲染与构建程序启动检查。

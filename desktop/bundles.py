@@ -6,6 +6,7 @@ import re
 import stat
 
 from .models import ID_PATTERN, validate_id
+from .scopes import contained, title
 
 
 def manifest(directory):
@@ -14,14 +15,17 @@ def manifest(directory):
     if source.is_symlink() or not source.is_file() or source.stat().st_size > 8 * 1024 ** 2:
         raise ValueError('备份清单不存在或格式无效。')
     data = json.loads(source.read_text(encoding='utf-8'))
-    if data.get('schema') != 1 or data.get('kind') != 'portable-linux-backup':
+    if data.get('schema') not in (1, 2) or data.get('kind') != 'portable-linux-backup':
         raise ValueError('不支持的备份包格式。')
     validate_id(data['id'])
     if re.fullmatch(ID_PATTERN, directory.name) and directory.name != data['id']:
         raise ValueError('版本目录和备份清单不匹配。')
     files = data.get('files')
-    if not isinstance(files, dict) or not {'system.tar.gz', 'home.tar.gz'} <= files.keys():
-        raise ValueError('清单缺少系统包或用户包。')
+    areas = contained(data)
+    if not isinstance(files, dict) or not {area + '.tar.gz' for area in areas} <= files.keys():
+        raise ValueError('清单缺少所选范围的备份包。')
+    if data['schema'] == 2 and {name[:-7] for name in files if name.endswith('.tar.gz')} != set(areas):
+        raise ValueError('归档文件与备份范围清单不一致。')
     for name, record in files.items():
         if re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', name) is None or name == 'manifest.json':
             raise ValueError('清单包含非法文件名。')
@@ -66,8 +70,12 @@ def catalog(repository):
                     payload = path / name
                     if payload.is_symlink() or not payload.is_file() or payload.stat().st_size != record['bytes']:
                         raise ValueError('备份文件缺失或大小变化：' + name)
+                included = contained(data)
+                kind = title(included)
+                if 'software' in included:
+                    kind += ' · 清单重装' if data.get('software_mode') == 'reinstall' else ' · 程序文件'
                 rows.append({'id': path.name, 'date': data['created_utc'], 'host': data.get('host', ''),
-                             'kind': '完整备份包', 'bytes': sum(f['bytes'] for f in data['files'].values()),
+                             'kind': kind, 'bytes': sum(f['bytes'] for f in data['files'].values()),
                              'path': str(path), 'metadata': data})
             except (OSError, ValueError, KeyError, TypeError) as exc:
                 rows.append({'id': path.name, 'date': '', 'host': '', 'kind': '清单异常',

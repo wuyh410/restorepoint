@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import shlex
 import socket
 import stat
 import subprocess
@@ -19,6 +20,9 @@ import time
 
 DEFAULT_REPOSITORY = Path('/var/backups/local-snapshots')
 GIB = 1024 ** 3
+AREAS = ('system', 'config', 'software', 'home')
+DEFAULT_AREAS = ('system', 'home')
+METADATA_FILES = ('packages.tsv', 'apt-manual.txt', 'snaps.txt', 'flatpaks.txt', 'os-release.json')
 BASE_OPTIONS = ['-aHAXSx', '--numeric-ids']
 SYSTEM_EXCLUDES = [
     '/dev/*', '/proc/*', '/sys/*', '/run/*', '/tmp/*', '/mnt/*',
@@ -32,6 +36,30 @@ ENV = dict(os.environ, LC_ALL='C')
 
 def fail(message):
     raise RuntimeError(message)
+
+
+def selected_areas(values=None):
+    values = DEFAULT_AREAS if values is None else values
+    if not isinstance(values, (list, tuple)) or not values or any(not isinstance(value, str) or value not in AREAS for value in values) or len(set(values)) != len(values):
+        fail('请选择有效且不重复的备份范围。')
+    return tuple(area for area in AREAS if area in values and not (area in ('config', 'software') and 'system' in values))
+
+
+def snapshot_areas(metadata):
+    if metadata.get('schema', 1) == 1:
+        return DEFAULT_AREAS
+    if metadata.get('schema') != 2:
+        fail('不支持的快照格式。')
+    areas = metadata.get('areas')
+    normalized = selected_areas(areas)
+    if areas is None or set(normalized) != set(areas):
+        fail('快照范围清单无效。')
+    return normalized
+
+
+def backup_sources(areas=None):
+    roots = {'system': Path('/'), 'config': Path('/etc'), 'software': Path('/'), 'home': Path('/home')}
+    return {area: roots[area] for area in selected_areas(areas)}
 
 
 def write_json(path, value):
@@ -55,7 +83,22 @@ def run(command, **kwargs):
     return subprocess.run(command, env=ENV, check=True, **kwargs)
 
 
-def exclusions(repository):
+def software_exclusions(mode='files', root=Path('/')):
+    if mode not in ('files', 'reinstall'):
+        fail('软件备份方式必须为 files 或 reinstall。')
+    allowed = {'etc', 'var'}
+    if mode == 'files':
+        allowed.update(('usr', 'opt', 'bin', 'sbin', 'lib', 'lib32', 'lib64', 'libx32'))
+    patterns = list(SYSTEM_EXCLUDES)
+    patterns.extend('/' + path.name for path in root.iterdir() if path.name not in allowed)
+    if (root / 'var').is_dir():
+        patterns.extend('/var/' + path.name for path in (root / 'var').iterdir() if path.name not in ('lib', 'opt'))
+    if mode == 'reinstall':
+        patterns += ['/var/lib/snapd/snaps/***', '/var/lib/flatpak/***']
+    return patterns
+
+
+def exclusions(repository, software_mode='files'):
     system = SYSTEM_EXCLUDES + [repository.as_posix() + '/***']
     for line in Path('/proc/swaps').read_text().splitlines()[1:]:
         fields = line.split()
@@ -64,7 +107,21 @@ def exclusions(repository):
             name = re.sub(r'\\([0-7]{3})', lambda m: chr(int(m[1], 8)), fields[0])
             if name not in system:
                 system.append(name)
-    return {'system': system, 'home': HOME_EXCLUDES}
+    roots = {'system': Path('/'), 'config': Path('/etc'), 'software': Path('/'), 'home': Path('/home')}
+    return protect_repository(roots, {'system': system, 'home': HOME_EXCLUDES, 'config': [], 'software': software_exclusions(software_mode)}, repository)
+
+
+def protect_repository(sources, patterns, repository):
+    result = {area: list(values) for area, values in patterns.items()}
+    for area, source in sources.items():
+        if repository.is_relative_to(source):
+            relative = repository.relative_to(source)
+            if not relative.parts:
+                fail('备份保存目录不能与来源目录相同。')
+            pattern = '/' + relative.as_posix() + '/***'
+            if pattern not in result[area]:
+                result[area].append(pattern)
+    return result
 
 
 def rsync_command(source, target, patterns, previous=None, dry_run=False):
@@ -131,7 +188,7 @@ def estimate(sources, patterns, previous):
             target = Path(temp) / area
             target.mkdir()
             result = run(rsync_command(source, target, patterns[area],
-                         previous / area if previous else None, dry_run=True),
+                         previous / area if previous and (previous / area).is_dir() else None, dry_run=True),
                          capture_output=True, text=True)
             match = re.search(r'Total transferred file size: ([\d,]+) bytes', result.stdout)
             if match is None:
@@ -142,7 +199,7 @@ def estimate(sources, patterns, previous):
     return total
 
 
-def iter_entries(snapshot):
+def iter_entries(snapshot, areas=None):
     def walk(directory):
         with os.scandir(directory) as iterator:
             entries = sorted(iterator, key=lambda e: e.name)
@@ -151,7 +208,11 @@ def iter_entries(snapshot):
             yield path
             if entry.is_dir(follow_symlinks=False):
                 yield from walk(path)
-    for area in ['system', 'home']:
+    if areas is None:
+        areas = [area for area in AREAS if (snapshot / area).exists() or (snapshot / area).is_symlink()]
+    for area in areas:
+        if (snapshot / area).is_symlink() or not (snapshot / area).is_dir():
+            fail('备份范围目录缺失或类型无效：' + area)
         yield snapshot / area
         yield from walk(snapshot / area)
 
@@ -172,10 +233,10 @@ def entry_record(path, snapshot, hashes):
     return record
 
 
-def create_manifest(snapshot):
+def create_manifest(snapshot, areas=None):
     count, hashes = 0, {}
     with (snapshot / 'integrity.jsonl').open('w') as stream:
-        for path in iter_entries(snapshot):
+        for path in iter_entries(snapshot, areas):
             record = entry_record(path, snapshot, hashes)
             stream.write(json.dumps(record, ensure_ascii=True, sort_keys=True) + '\n')
             count += 1
@@ -184,6 +245,16 @@ def create_manifest(snapshot):
 
 def verify(snapshot):
     metadata = json.loads((snapshot / 'snapshot.json').read_text())
+    areas = snapshot_areas(metadata)
+    present = {area for area in AREAS if (snapshot / area).exists() or (snapshot / area).is_symlink()}
+    if present != set(areas):
+        fail('备份范围目录与清单不一致。')
+    extra = metadata.get('metadata_sha256', {})
+    if not isinstance(extra, dict):
+        fail('软件或系统元数据清单无效。')
+    for name, expected_digest in extra.items():
+        if name not in METADATA_FILES or not (snapshot / name).is_file() or (snapshot / name).is_symlink() or digest(snapshot / name) != expected_digest:
+            fail('软件或系统元数据校验失败：' + str(name))
     manifest = snapshot / 'integrity.jsonl'
     if digest(manifest) != metadata['manifest_sha256']:
         fail('校验清单自身已发生变化。')
@@ -192,13 +263,13 @@ def verify(snapshot):
         for line in stream:
             record = json.loads(line)
             relative = Path(record['path'])
-            if relative.is_absolute() or '..' in relative.parts or relative.parts[0] not in ('system', 'home'):
+            if not relative.parts or relative.is_absolute() or '..' in relative.parts or relative.parts[0] not in areas:
                 fail('校验清单包含非法路径。')
             path = snapshot / relative
             if entry_record(path, snapshot, hashes) != record:
                 fail(f'备份校验失败：{relative}')
             expected.add(str(relative))
-    actual = {str(p.relative_to(snapshot)) for p in iter_entries(snapshot)}
+    actual = {str(p.relative_to(snapshot)) for p in iter_entries(snapshot, areas)}
     if actual != expected or len(expected) != metadata['entries']:
         fail('文件列表与校验清单不一致。')
     print(f'校验通过：{snapshot.name}，{len(expected)} 个条目。')
@@ -225,6 +296,7 @@ def copy_area(command, log_path, repository, reserve_bytes):
 
 
 def capture_metadata(snapshot):
+    write_json(snapshot / 'os-release.json', system_identity())
     commands = {
         'packages.tsv': ['dpkg-query', '-W', '-f=${binary:Package}\t${Version}\t${Architecture}\t${db:Status-Abbrev}\n'],
         'apt-manual.txt': ['apt-mark', 'showmanual'],
@@ -247,7 +319,28 @@ def capture_metadata(snapshot):
             print(f'附加清单未成功获取：{name} ({exc})', flush=True)
 
 
-def create_snapshot(repository, sources, patterns, previous, reserve_bytes):
+def system_identity(root=Path('/')):
+    values = {}
+    source = root / 'etc/os-release'
+    if root != Path('/') and not source.resolve().is_relative_to(root):
+        fail('目标系统版本文件不能指向目标目录之外。')
+    for line in source.read_text().splitlines():
+        if '=' in line and not line.startswith('#'):
+            name, value = line.split('=', 1)
+            decoded = shlex.split(value)
+            values[name] = decoded[0] if decoded else ''
+    return {name: values.get(name, '') for name in ('ID', 'VERSION_ID')} | {'machine': os.uname().machine}
+
+
+def metadata_hashes(directory):
+    return {name: digest(directory / name) for name in METADATA_FILES if (directory / name).is_file() and not (directory / name).is_symlink()}
+
+
+def create_snapshot(repository, sources, patterns, previous, reserve_bytes, software_mode='files'):
+    patterns = protect_repository(sources, patterns, repository)
+    areas = selected_areas(list(sources))
+    if set(areas) != set(sources):
+        fail('系统备份已包含配置，请勿重复复制配置范围。')
     started = dt.datetime.now(dt.timezone.utc)
     name = started.strftime('%Y%m%dT%H%M%S.%fZ-') + os.urandom(4).hex()
     staging = repository / ('.incomplete-' + name)
@@ -260,15 +353,16 @@ def create_snapshot(repository, sources, patterns, previous, reserve_bytes):
     capture_metadata(staging)
     for area, source in sources.items():
         print(f'正在复制 {area}…', flush=True)
-        command = rsync_command(source, staging / area, patterns[area], previous / area if previous else None)
+        command = rsync_command(source, staging / area, patterns[area], previous / area if previous and (previous / area).is_dir() else None)
         copy_area(command, staging / (area + '-rsync.log'), repository, reserve_bytes)
     print('正在生成文件 SHA-256 校验清单…', flush=True)
-    count = create_manifest(staging)
+    count = create_manifest(staging, areas)
     write_json(staging / 'snapshot.json', {
-        'schema': 1, 'name': name, 'host': socket.gethostname(),
+        'schema': 1 if set(areas) == set(DEFAULT_AREAS) else 2, 'areas': list(areas), 'name': name, 'host': socket.gethostname(),
         'started': started.isoformat(), 'completed': dt.datetime.now(dt.timezone.utc).isoformat(),
         'previous': previous.name if previous else None, 'entries': count,
         'sources': {k: str(v) for k, v in sources.items()}, 'excludes': patterns,
+        'software_mode': software_mode, 'metadata_sha256': metadata_hashes(staging),
         'manifest_sha256': digest(staging / 'integrity.jsonl'),
     })
     # Flush the backup before advertising it as a completed generation.
@@ -313,8 +407,8 @@ def select_snapshot(repository, name):
 def restore_command(snapshot, area, target, relative=None, apply=False):
     """Build one restore command; source generations are always read-only."""
     snapshot = snapshot.resolve(strict=True)
-    if area not in ('system', 'home'):
-        fail('恢复范围必须为 system 或 home。')
+    if area not in AREAS:
+        fail('恢复范围必须为 system、config 或 home。')
     if not target.is_absolute() or target.resolve() != target or not target.is_dir():
         fail('恢复目标必须是已存在、不含符号链接的绝对目录。')
     if target == Path('/'):
@@ -327,11 +421,21 @@ def restore_command(snapshot, area, target, relative=None, apply=False):
             fail('系统恢复不接受局部路径，请使用 home 范围恢复用户文件。')
         if not target.is_mount() or target.stat().st_dev == Path('/').stat().st_dev:
             fail('系统恢复目标必须是救援环境中单独挂载的系统分区。')
+    metadata_path = snapshot / 'snapshot.json'
+    data = json.loads(metadata_path.read_text()) if metadata_path.is_file() else {}
+    areas = snapshot_areas(data)
+    if area == 'config' and 'config' not in areas and 'system' in areas:
+        source = snapshot / 'system' / 'etc'
+    elif area == 'software' and 'software' not in areas and 'system' in areas:
+        source = snapshot / 'system'
+    elif area not in areas:
+        fail('该版本不包含所选恢复范围。')
+    if source.is_symlink() or not source.is_dir():
+        fail('该版本不包含所选恢复范围目录。')
     command = ['rsync', '-aHAXS', '--numeric-ids', '--itemize-changes']
     if not apply:
         command.append('--dry-run')
     if area == 'system':
-        data = json.loads((snapshot / 'snapshot.json').read_text())
         patterns = list(data['excludes']['system'])
         if not all(pattern in patterns for pattern in SYSTEM_EXCLUDES):
             fail('备份缺少必要的系统恢复保护规则。')
@@ -339,10 +443,18 @@ def restore_command(snapshot, area, target, relative=None, apply=False):
             patterns.append('/' + str(snapshot.relative_to(target)) + '/***')
         command.append('--delete-delay')
         command.extend('--exclude=' + pattern for pattern in patterns)
+    if area == 'software':
+        if 'software' not in data.get('excludes', {}):
+            fail('此版本缺少独立软件恢复规则。')
+        if (target / 'etc/os-release').exists():
+            recorded = snapshot / 'os-release.json'
+            if not recorded.is_file() or json.loads(recorded.read_text()) != system_identity(target):
+                fail('软件文件恢复到系统目录要求相同的系统版本与 CPU 架构；可先恢复到独立空目录检查。')
+        command.extend('--exclude=' + pattern for pattern in data['excludes']['software'])
     if relative is not None:
         path = Path(relative)
         if not path.parts or path.is_absolute() or '..' in path.parts:
-            fail('用户文件路径必须是 home 内的相对路径。')
+            fail('文件路径必须是所选备份范围内的相对路径。')
         current = source
         for part in path.parts[:-1]:
             current /= part
@@ -358,9 +470,48 @@ def restore_command(snapshot, area, target, relative=None, apply=False):
     return command + [source_arg, str(target) + '/']
 
 
+def software_install_command(snapshot, simulate=True):
+    data = json.loads((snapshot / 'snapshot.json').read_text())
+    if not set(snapshot_areas(data)) & {'system', 'software'}:
+        fail('该版本未选择系统或软件备份，不能按清单重装。')
+    if not {'packages.tsv', 'os-release.json'} <= data.get('metadata_sha256', {}).keys():
+        fail('此版本缺少受校验的软件清单或系统版本信息，不能自动重装。')
+    recorded = json.loads((snapshot / 'os-release.json').read_text())
+    if not all(recorded.get(name) for name in ('ID', 'VERSION_ID', 'machine')):
+        fail('软件清单缺少明确的系统版本或 CPU 架构。')
+    if recorded != system_identity():
+        fail('软件清单重装要求相同的发行版版本与 CPU 架构。')
+    if shutil.which('apt-get') is None:
+        fail('清单重装当前支持使用 apt 的 Debian / Ubuntu 系统。')
+    packages = []
+    for line in (snapshot / 'packages.tsv').read_text().splitlines():
+        columns = line.split('\t')
+        if len(columns) != 4 or len(columns[3].strip()) < 2 or columns[3].strip()[1] != 'i':
+            continue
+        name, version = columns[:2]
+        if re.fullmatch(r'[a-z0-9][a-z0-9+.-]*(?::[a-z0-9_-]+)?', name) is None or re.fullmatch(r'[A-Za-z0-9.+:~_-]+', version) is None:
+            fail('软件清单包含非法包名或版本。')
+        packages.append(name + '=' + version)
+    if not packages or len(packages) > 20000:
+        fail('软件清单为空或条目过多。')
+    options = ['apt-get', '--simulate' if simulate else '--yes', '--no-remove', '--allow-downgrades',
+               '--no-install-recommends', '-o', 'Dpkg::Options::=--force-confold', 'install']
+    return options + packages
+
+
 def restore_tree(snapshot, area, target, relative=None, apply=False):
     if os.geteuid() != 0:
         fail('恢复权限、属主和扩展属性需要 sudo。')
+    if area == 'packages':
+        if target != Path('/') or relative:
+            fail('软件清单重装仅作用于当前测试机 /，不接受局部路径。')
+        verify(snapshot)
+        print('软件重装预览：精确版本、禁止移除已有软件，不自动回写备份中的配置与应用数据。', flush=True)
+        run(software_install_command(snapshot))
+        if apply:
+            print('正在按清单重装 apt 软件；配置和应用数据可另行恢复到独立目录。', flush=True)
+            run(software_install_command(snapshot, simulate=False), env=dict(ENV, DEBIAN_FRONTEND='noninteractive'))
+        return
     # Guard the target before spending time reading a complete generation.
     command = restore_command(snapshot, area, target, relative, apply)
     verify(snapshot)
@@ -375,12 +526,14 @@ def main():
     for name in ['plan', 'create']:
         item = sub.add_parser(name)
         item.add_argument('--reserve-gib', type=int, default=8)
+        item.add_argument('--areas', nargs='+', choices=AREAS, help='选择 system（含配置）、config 或 home；默认 system home')
+        item.add_argument('--software-mode', choices=('files', 'reinstall'), default='files')
     sub.add_parser('list')
     item = sub.add_parser('verify')
     item.add_argument('snapshot', nargs='?', default='latest')
     item = sub.add_parser('restore')
     item.add_argument('snapshot', nargs='?', default='latest')
-    item.add_argument('--area', choices=['system', 'home'], required=True)
+    item.add_argument('--area', choices=(*AREAS, 'packages'), required=True)
     item.add_argument('--target', type=Path, required=True)
     item.add_argument('--relative', help='相对于备份 home 的用户文件路径，例如 wyh/文档')
     item.add_argument('--apply', action='store_true', help='执行恢复；默认只预览')
@@ -414,8 +567,9 @@ def main():
         try:
             choices = completed(repository)
             previous = choices[-1] if choices else None
-            sources = {'system': Path('/'), 'home': Path('/home')}
-            patterns = exclusions(repository)
+            sources = backup_sources(args.areas)
+            mode = 'files' if 'system' in sources else args.software_mode
+            patterns = exclusions(repository, mode)
             size = estimate(sources, patterns, previous)
             free = available(repository)
             reserve = args.reserve_gib * GIB
@@ -424,7 +578,7 @@ def main():
             if free - needed < reserve:
                 fail('空间不足，不会开始复制。')
             if args.command == 'create':
-                create_snapshot(repository, sources, patterns, previous, reserve)
+                create_snapshot(repository, sources, patterns, previous, reserve, mode)
             else:
                 print('空间预检通过。未复制文件；仅初始化了受保护的备份目录和锁文件。')
         finally:

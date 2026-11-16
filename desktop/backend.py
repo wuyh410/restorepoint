@@ -22,6 +22,7 @@ from . import bundles
 from .models import validate_id
 from .runtime import application_executable, compiled_application, helper_source, resource_root
 from .terminal import LogLines, clean_log_text
+from .scopes import DEFAULT, normalize, title
 
 
 class Cancelled(RuntimeError):
@@ -115,18 +116,21 @@ class LocalService:
     def __init__(self, profile, context):
         self.profile, self.context = profile, context
 
-    def run(self, action, snapshot='', area='home', target='', relative='', apply=False):
+    def run(self, action, snapshot='', area='home', target='', relative='', apply=False, areas=None, software_mode=None):
         self.profile.validate()
         root = ['--repository', self.profile.repository]
+        selected = normalize(self.profile.backup_areas if areas is None else areas)
+        mode = 'files' if 'system' in selected else software_mode or self.profile.software_mode
+        scope_args = ['--areas', *selected, '--software-mode', mode]
         if action == 'catalog':
             path = Path(self.profile.repository)
             if not path.exists():
                 return []
             return parse_result(run_local(engine_command('gui_bridge', ['catalog'] + root), self.context, True))
         if action == 'backup':
-            return parse_result(run_local(engine_command('gui_bridge', ['create'] + root + ['--reserve-gib', str(self.profile.reserve_gib)]), self.context, True))
+            return parse_result(run_local(engine_command('gui_bridge', ['create'] + root + ['--reserve-gib', str(self.profile.reserve_gib)] + scope_args), self.context, True))
         if action == 'plan':
-            return run_local(engine_command('snapshot', root + ['plan', '--reserve-gib', str(self.profile.reserve_gib)]), self.context, True)
+            return run_local(engine_command('snapshot', root + ['plan', '--reserve-gib', str(self.profile.reserve_gib)] + scope_args), self.context, True)
         if action == 'connect':
             return parse_result(run_local(engine_command('gui_bridge', ['doctor']), self.context))
         validate_id(snapshot)
@@ -387,8 +391,11 @@ class RemoteService:
         self.context.log('备份已保存：' + str(final))
         return data
 
-    def run(self, action, snapshot='', area='home', target='', relative='', apply=False):
+    def run(self, action, snapshot='', area='home', target='', relative='', apply=False, encrypt=False, remember=False, areas=None, software_mode=None):
         self.profile.validate()
+        if action == 'setup_key':
+            from .ssh_keys import setup_key
+            return setup_key(self.profile, self.context, self.data_directory, encrypt)
         if action == 'catalog':
             return bundles.catalog(self.profile.storage)
         if action == 'verify':
@@ -409,11 +416,17 @@ class RemoteService:
                 return '组件部署完成'
             if action in ('plan', 'backup'):
                 arguments = ['plan' if action == 'plan' else 'create', '--export-root', profile.export_root, '--reserve-gib', str(profile.reserve_gib)]
+                selected = normalize(profile.backup_areas if areas is None else areas)
+                mode = software_mode or profile.software_mode
+                self.context.log('备份类型：' + title(selected))
+                if set(selected) != set(DEFAULT):
+                    self.require_scoped_helper(connection)
+                    arguments += ['--areas', *selected, '--software-mode', mode]
                 if action == 'backup':
                     snapshot = new_id()
                     arguments += ['--snapshot', snapshot]
                     self.context.log('新版本：' + snapshot)
-                self.context.progress(-1, '测试机正在检查环境' if action == 'plan' else '测试机正在生成完整备份包')
+                self.context.progress(-1, '测试机正在检查所选范围' if action == 'plan' else '测试机正在生成所选范围的备份包')
                 result = connection.run(arguments, root=True)
                 return self.fetch(connection, snapshot) if action == 'backup' else result
             if action == 'fetch':
@@ -442,6 +455,9 @@ class RemoteService:
                                        '--destination', profile.staging.rstrip('/') + '/' + snapshot,
                                        '--reserve-gib', str(profile.reserve_gib)], root=True)
             if action == 'restore':
+                if area not in ('system', 'home'):
+                    self.require_scoped_helper(connection)
+                self.context.progress(-1, '正在校验清单并预览软件安装' if area == 'packages' and not apply else '正在按清单安装软件' if area == 'packages' else '正在校验并执行恢复' if apply else '正在校验备份并生成恢复预览')
                 arguments = ['restore', '--prepared', profile.staging.rstrip('/') + '/' + snapshot, '--area', area, '--target', target]
                 if relative:
                     arguments += ['--relative', relative]
@@ -453,3 +469,9 @@ class RemoteService:
                 checksum = hashlib.sha256((bundle / 'manifest.json').read_bytes()).hexdigest()
                 return connection.run(['remove-export', '--export-root', profile.export_root, '--snapshot', snapshot, '--manifest-sha256', checksum], root=True)
             raise ValueError('未知操作：' + action)
+
+    def require_scoped_helper(self, connection):
+        probe = "import json,pathlib,sys;print('RP_RESULT='+json.dumps({'supported':'SCOPED_BACKUP_VERSION = 2' in pathlib.Path(sys.argv[1]).read_text()}))"
+        result = parse_result(connection.run(['python3', '-c', probe, self.profile.remote_helper], raw=True))
+        if not result.get('supported'):
+            raise ValueError('按类型备份和软件恢复需要新版测试机组件。请先点击「部署 / 更新测试机组件」。')

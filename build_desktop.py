@@ -125,6 +125,10 @@ def main():
     if {name: record['sha256'] for name, record in runtime['helpers'].items()} != expected_helpers:
         raise SystemExit('Bundled Linux helper resources do not match the source.')
     if args.smoke_test:
+        key_check = spec.parent / 'key-check.json'
+        subprocess.run([str(result / executable), '--key-self-test', str(key_check)], check=True, env=env, timeout=30)
+        if not json.loads(key_check.read_text(encoding='utf-8'))['ok']:
+            raise SystemExit('Compiled SSH key generation and permission check failed.')
         smoke_env = dict(env, QT_QPA_PLATFORM='offscreen')
         subprocess.run([str(result / executable), '--data-dir', str(spec.parent / ('smoke-' + uuid.uuid4().hex)),
                         '--screenshot', str(spec.parent / 'smoke.png')], check=True, env=smoke_env, timeout=60)

@@ -40,6 +40,34 @@ def credential_self_test():
     return {'ok': True}
 
 
+def key_self_test():
+    """Check bundled key generation and permissions in a disposable folder."""
+    import secrets
+    import tempfile
+    from desktop.models import Profile
+    from desktop.ssh_keys import prepare_key
+    class Context:
+        def check(self): pass
+        def get_credential(self, kind):
+            return secret if kind == 'setup_key' else None
+    with tempfile.TemporaryDirectory(prefix='restorepoint-key-check-') as directory:
+        for encrypted in (False, True):
+            secret = secrets.token_urlsafe(24)
+            profile = Profile(host='encrypted.invalid' if encrypted else 'plain.invalid')
+            key = prepare_key(directory, profile, Context(), encrypted)
+            if not key.created or not key.public.startswith('ssh-ed25519 '):
+                raise RuntimeError('Key generation failed')
+            repeated = prepare_key(directory, profile, Context(), encrypted)
+            if repeated.created or repeated.fingerprint != key.fingerprint:
+                raise RuntimeError('Key reuse failed')
+            if sys.platform == 'win32':
+                from desktop.windows_security import current_sid, read_acl
+                acl = read_acl(key.path)
+                if current_sid() not in acl or ';;;WD)' in acl or ';;;BU)' in acl:
+                    raise RuntimeError('Private key access control failed')
+    return {'ok': True}
+
+
 def run_engine(name, arguments):
     if sys.platform != 'linux':
         raise SystemExit('Local system engines require Linux.')
@@ -60,7 +88,11 @@ def run_engine(name, arguments):
 
 
 if __name__ == '__main__':
-    if sys.argv[1:2] == ['--credential-self-test'] and len(sys.argv) == 3:
+    if sys.argv[1:2] == ['--key-self-test'] and len(sys.argv) == 3:
+        import json
+        from pathlib import Path
+        Path(sys.argv[2]).write_text(json.dumps(key_self_test()), encoding='utf-8')
+    elif sys.argv[1:2] == ['--credential-self-test'] and len(sys.argv) == 3:
         import json
         from pathlib import Path
         Path(sys.argv[2]).write_text(json.dumps(credential_self_test()), encoding='utf-8')

@@ -1,7 +1,7 @@
 """Value controls that never change a setting in response to the mouse wheel."""
-from PySide6.QtCore import QPoint, QPointF, QSize
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QSpinBox, QStyledItemDelegate, QStyle, QStyleOptionComboBox, QStylePainter
+from PySide6.QtCore import QPoint, QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QWheelEvent
+from PySide6.QtWidgets import QApplication, QAbstractScrollArea, QComboBox, QSpinBox, QSplitter, QSplitterHandle, QStyledItemDelegate, QStyle, QStyleOptionComboBox, QStylePainter
 
 
 def scroll_parent(widget, event):
@@ -23,6 +23,46 @@ def scroll_parent(widget, event):
 class ValueSpinBox(QSpinBox):
     def wheelEvent(self, event):
         scroll_parent(self, event)
+
+
+class TaskSplitterHandle(QSplitterHandle):
+    def __init__(self, orientation, parent):
+        super().__init__(orientation, parent)
+        self.pressed = False
+        self.setMouseTracking(True)
+        self.setCursor(Qt.CursorShape.SplitVCursor)
+        self.setToolTip('拖动调整日志高度')
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        color = '#5279bb' if self.pressed else '#7e98bf' if self.underMouse() else '#bdcadc'
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(color))
+        painter.drawRoundedRect(QRectF((self.width() - 44) / 2, (self.height() - 3) / 2, 44, 3), 1.5, 1.5)
+
+    def enterEvent(self, event):
+        super().enterEvent(event)
+        self.update()
+
+    def leaveEvent(self, event):
+        super().leaveEvent(event)
+        self.update()
+
+    def mousePressEvent(self, event):
+        self.pressed = True
+        self.update()
+        super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self.pressed = False
+        self.update()
+
+
+class TaskSplitter(QSplitter):
+    def createHandle(self):
+        return TaskSplitterHandle(self.orientation(), self)
 
 
 class ComboItemDelegate(QStyledItemDelegate):
